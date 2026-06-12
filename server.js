@@ -11,7 +11,7 @@ import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const APP_VERSION = '3.3.2';
+const APP_VERSION = '3.4.0';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -38,8 +38,23 @@ const storage = multer.diskStorage({
   }
 });
 
+const ALLOWED_MIME = new Set([
+  'video/webm',
+  'video/mp4',
+  'video/quicktime',
+]);
+
+const fileFilter = (_req, file, cb) => {
+  if (ALLOWED_MIME.has(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error(`Unsupported MIME type: ${file.mimetype}`), false);
+  }
+};
+
 const upload = multer({
   storage,
+  fileFilter,
   limits: { fileSize: 500 * 1024 * 1024 } // 500 MB
 });
 
@@ -944,7 +959,19 @@ function openBrowser(url) {
   const cmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
   const full = process.platform === 'win32' ? `${cmd} "" "${url}"` : `${cmd} "${url}"`;
   exec(full, err => { if (err) console.error(`Auto-open failed: ${err.message}`); });
-}
+};
+
+// ── Global error handler ────────────────────────────────────────────
+app.use((err, _req, res, _next) => {
+  if (err.code === 'LIMIT_FILE_SIZE') {
+    return res.status(413).json({ success: false, error: 'File too large. Maximum is 500 MB.' });
+  }
+  if (err.message?.startsWith('Unsupported MIME')) {
+    return res.status(415).json({ success: false, error: err.message });
+  }
+  console.error('[Server Error]', err.message);
+  res.status(500).json({ success: false, error: 'Internal server error.' });
+});
 
 // ── Start server ────────────────────────────────────────────────────
 const server = http.createServer(app);

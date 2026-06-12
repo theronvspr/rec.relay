@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>rec.relay — dashboard</title>
   <meta name="description" content="rec.relay PC dashboard. Receive, manage, and stream recordings from your phone.">
-  <link rel="stylesheet" href="styles.css?v=3.3.2">
+  <link rel="stylesheet" href="styles.css?v=3.4.0">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css">
 </head>
 <body>
@@ -95,7 +95,7 @@
       </div>
       <!-- Version footer -->
       <div style="text-align: center; margin-top: var(--space-4); font-size: 10px; color: var(--ink-muted); font-family: var(--font-mono);">
-        v3.3.2
+        v3.4.0
       </div>
     </div>
 
@@ -139,7 +139,7 @@
 
   <script>
     // ── Version ───────────────────────────────────────────────────
-    const APP_VERSION = '3.3.2';
+    const APP_VERSION = '3.4.0';
 
     // ── Config ────────────────────────────────────────────────────
     // IMPORTANT: Set this to your GitHub Pages URL for production
@@ -637,7 +637,11 @@
         const res = await fetch(`/files/${filename}`, { method: 'DELETE' });
         const json = await res.json();
         if (json.success) { loadFiles(); showToast(`Deleted ${filename}`); }
-      } catch (err) { console.error('Delete error:', err); }
+        else { showToast('Failed to delete file'); }
+      } catch (err) {
+        console.error('Delete error:', err);
+        showToast('Could not delete file. Check server.');
+      }
     };
 
     // ── Calendar ──────────────────────────────────────────────────

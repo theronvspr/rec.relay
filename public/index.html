@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>rec.relay</title>
   <meta name="description" content="Record on mobile, land on PC, over LAN.">
-  <link rel="stylesheet" href="styles.css?v=3.3.2">
+  <link rel="stylesheet" href="styles.css?v=3.4.0">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css">
 </head>
 <body>
@@ -52,10 +52,23 @@
         <!-- Success overlay -->
         <div id="success-overlay" class="upload-overlay" style="display: none;">
           <p style="font-size: 18px; color: var(--color-primary); margin-bottom: var(--space-1);">&#10003;</p>
-          <p style="font-size: 13px; color: var(--ink-primary); margin-bottom: var(--space-4);">Landed on PC</p>
+          <p style="font-size: 13px; color: var(--ink-primary); margin-bottom: var(--space-3);">Landed on PC</p>
+          <video id="playback-video" controls playsinline style="display: none; width: 100%; max-height: 200px; border-radius: var(--radius-md); margin-bottom: var(--space-3); background: #000;"></video>
           <div style="display: flex; flex-direction: column; gap: var(--space-2);">
+            <button id="btn-play-recording" class="btn btn-secondary" style="width: 100%;"><i class="ti ti-player-play"></i> Play Recording</button>
             <button id="btn-new" class="btn btn-primary" style="width: 100%;">Record another</button>
-            <button id="btn-close-success" class="btn btn-secondary" style="width: 100%;">Close</button>
+            <button id="btn-close-success" class="btn btn-ghost" style="width: 100%;">Close</button>
+          </div>
+        </div>
+
+        <!-- Error overlay -->
+        <div id="error-overlay" class="upload-overlay" style="display: none;">
+          <p style="font-size: 24px; color: var(--color-danger); margin-bottom: var(--space-1);"><i class="ti ti-alert-triangle"></i></p>
+          <p style="font-size: 13px; color: var(--ink-primary); margin-bottom: var(--space-1);">Transfer failed</p>
+          <p style="font-size: 11px; color: var(--ink-muted); margin-bottom: var(--space-4);">Check that your phone and PC are on the same Wi-Fi.</p>
+          <div style="display: flex; flex-direction: column; gap: var(--space-2);">
+            <button id="btn-retry" class="btn btn-primary" style="width: 100%;"><i class="ti ti-refresh"></i> Retry</button>
+            <button id="btn-error-rerecord" class="btn btn-ghost" style="width: 100%;">Re-record</button>
           </div>
         </div>
 
@@ -75,6 +88,9 @@
       <div class="control-slot left">
         <button id="btn-flip" class="circle-btn" title="Flip camera">
           <i class="ti ti-refresh"></i>
+        </button>
+        <button id="btn-rerecord" class="circle-btn" style="display: none; background: var(--color-danger-bg); border-color: var(--color-danger); color: var(--color-danger);" title="Re-record (discard)">
+          <i class="ti ti-x"></i>
         </button>
       </div>
 
@@ -123,9 +139,26 @@
 
     <!-- Version footer -->
     <div style="text-align: center; margin-top: auto; padding: var(--space-4) 0 0 0; font-size: 10px; color: var(--ink-muted); font-family: var(--font-mono);">
-      v3.3.2
+      v3.4.0
     </div>
 
+  </div>
+
+  <!-- Unsupported browser overlay -->
+  <div id="unsupported-overlay" style="display: none; position: fixed; inset: 0; background: var(--color-bg); z-index: 1000; justify-content: center; align-items: center; padding: var(--space-6);">
+    <div class="card" style="max-width: 400px; width: 100%; text-align: center;">
+      <div style="font-size: 48px; color: var(--color-danger); margin-bottom: var(--space-4);">
+        <i class="ti ti-device-mobile-off"></i>
+      </div>
+      <h2 style="margin-bottom: var(--space-2);">Browser Not Supported</h2>
+      <p style="font-size: 13px; color: var(--ink-secondary); margin-bottom: var(--space-6); line-height: 1.6;">
+        Your browser doesn't support video recording. Please open this page in <strong>Chrome</strong> or <strong>Safari</strong>.
+      </p>
+      <div style="display: flex; flex-direction: column; gap: var(--space-2);">
+        <a href="https://www.google.com/chrome/" target="_blank" class="btn btn-primary" style="width: 100%;">Get Chrome</a>
+        <a href="https://support.apple.com/safari" target="_blank" class="btn btn-ghost" style="width: 100%;">About Safari</a>
+      </div>
+    </div>
   </div>
 
   <!-- QR Scanner Modal -->
@@ -157,7 +190,7 @@
 
   <script>
     // ── Version ───────────────────────────────────────────────────
-    const APP_VERSION = '3.3.2';
+    const APP_VERSION = '3.4.0';
 
     // ── Elements ──────────────────────────────────────────────────
     const viewfinder     = document.getElementById('viewfinder');
@@ -203,6 +236,16 @@
     let isInitializingCamera = false;
     let isFrontCamera = false;
     let canvasAnimFrame = null;
+    let lastRecordedBlob = null; // Keeps the assembled Blob for replay / retry
+    let playbackObjectUrl = null;
+
+    // ── New element refs ──────────────────────────────────────────
+    const btnRerecord      = document.getElementById('btn-rerecord');
+    const btnPlayRecording = document.getElementById('btn-play-recording');
+    const playbackVideo    = document.getElementById('playback-video');
+    const errorOverlay     = document.getElementById('error-overlay');
+    const btnRetry         = document.getElementById('btn-retry');
+    const btnErrorRerecord = document.getElementById('btn-error-rerecord');
 
     // ── Helpers ───────────────────────────────────────────────────
     function getFriendlyCameraName(label, index) {
@@ -520,8 +563,20 @@
 
       } catch (err) {
         console.error('Camera error:', err);
-        recStatus.textContent = 'camera blocked';
-        recStatus.className = 'badge badge-error';
+        const errName = err.name || '';
+        if (errName === 'NotFoundError' || errName === 'DevicesNotFoundError') {
+          recStatus.textContent = 'no camera';
+          recStatus.className = 'badge badge-error';
+          showMobileToast('No camera detected on this device.');
+        } else if (errName === 'NotAllowedError' || errName === 'PermissionDeniedError') {
+          recStatus.textContent = 'camera blocked';
+          recStatus.className = 'badge badge-error';
+          showMobileToast('Camera access was denied. Check browser settings.');
+        } else {
+          recStatus.textContent = 'camera error';
+          recStatus.className = 'badge badge-error';
+          showMobileToast('Camera error: ' + err.message);
+        }
         flipBtn.disabled = false;
       } finally {
         isInitializingCamera = false;
@@ -660,18 +715,26 @@
         canvasAnimFrame = null;
       }
 
-      // Hide pause, show upload button in right slot
+      // Assemble blob immediately for replay / retry
+      const mime = mediaRecorder?.mimeType || 'video/webm';
+      lastRecordedBlob = new Blob(chunks, { type: mime });
+
+      // Hide pause, show upload + re-record buttons
       pauseBtn.disabled = true;
       pauseBtn.style.display = 'none';
       uploadBtn.style.display = 'inline-flex';
+      btnRerecord.style.display = 'inline-flex';
       
       clearInterval(timerInterval);
       recTimer.style.display = 'none';
     }
 
     // ── Upload via WebRTC ─────────────────────────────────────────
-    uploadBtn.addEventListener('click', async () => {
-      if (!chunks.length || !peerConn || !peerConn.open) return;
+    async function performUpload() {
+      if (!lastRecordedBlob || !peerConn || !peerConn.open) {
+        showMobileToast('Not connected to PC.');
+        return;
+      }
 
       const commentVal = document.getElementById('mobile-input-comment').value.trim();
       const tagsVal = document.getElementById('mobile-input-tags').value;
@@ -681,63 +744,84 @@
         .map(t => t.trim())
         .filter(t => t.length > 0);
 
-      const mime = mediaRecorder?.mimeType || 'video/webm';
+      const mime = lastRecordedBlob.type || 'video/webm';
       const ext = mime.includes('mp4') ? 'mp4' : 'webm';
-      const blob = new Blob(chunks, { type: mime });
-      const arrayBuffer = await blob.arrayBuffer();
+      const arrayBuffer = await lastRecordedBlob.arrayBuffer();
 
       uploadBtn.style.display = 'none';
+      btnRerecord.style.display = 'none';
+      errorOverlay.style.display = 'none';
       uploadOverlay.style.display = 'block';
+      uploadBar.style.width = '0%';
+      uploadPct.textContent = '0%';
       setRecordButtonDisabled(true);
       flipBtn.disabled = true;
 
-      // Send metadata first
-      peerConn.send(JSON.stringify({
-        type: 'file-start',
-        filename: `recording-${Date.now()}.${ext}`,
-        mimeType: mime,
-        totalSize: arrayBuffer.byteLength,
-        comment: commentVal,
-        tags: tagsArray,
-        musicLink: musicVal
-      }));
+      try {
+        // Send metadata first
+        peerConn.send(JSON.stringify({
+          type: 'file-start',
+          filename: `recording-${Date.now()}.${ext}`,
+          mimeType: mime,
+          totalSize: arrayBuffer.byteLength,
+          comment: commentVal,
+          tags: tagsArray,
+          musicLink: musicVal
+        }));
 
-      // Send in 64KB chunks
-      const CHUNK = 64 * 1024;
-      let sent = 0;
-      for (let offset = 0; offset < arrayBuffer.byteLength; offset += CHUNK) {
-        const slice = arrayBuffer.slice(offset, Math.min(offset + CHUNK, arrayBuffer.byteLength));
-        peerConn.send(slice);
-        sent += slice.byteLength;
-        const pct = Math.round((sent / arrayBuffer.byteLength) * 100);
-        uploadBar.style.width = `${pct}%`;
-        uploadPct.textContent = `${pct}%`;
+        // Send in 64KB chunks
+        const CHUNK = 64 * 1024;
+        let sent = 0;
+        for (let offset = 0; offset < arrayBuffer.byteLength; offset += CHUNK) {
+          if (!peerConn || !peerConn.open) {
+            throw new Error('Connection lost during transfer.');
+          }
+          const slice = arrayBuffer.slice(offset, Math.min(offset + CHUNK, arrayBuffer.byteLength));
+          peerConn.send(slice);
+          sent += slice.byteLength;
+          const pct = Math.round((sent / arrayBuffer.byteLength) * 100);
+          uploadBar.style.width = `${pct}%`;
+          uploadPct.textContent = `${pct}%`;
 
-        // Yield to browser to keep UI responsive
-        if (offset % (CHUNK * 4) === 0) await new Promise(r => setTimeout(r, 0));
+          // Yield to browser to keep UI responsive
+          if (offset % (CHUNK * 4) === 0) await new Promise(r => setTimeout(r, 0));
+        }
+
+        peerConn.send(JSON.stringify({ type: 'file-end' }));
+
+        // Show success
+        uploadOverlay.style.display = 'none';
+        successOverlay.style.display = 'block';
+        recStatus.textContent = 'sent';
+        recStatus.className = 'badge badge-upload';
+        setRecordButtonDisabled(false);
+        flipBtn.disabled = false;
+        chunks = [];
+
+        // Reset right slot controls
+        pauseBtn.disabled = true;
+        pauseBtn.innerHTML = '<i class="ti ti-player-pause"></i>';
+        pauseBtn.style.display = 'inline-flex';
+        uploadBtn.style.display = 'none';
+        btnRerecord.style.display = 'none';
+
+      } catch (err) {
+        console.error('Upload error:', err);
+        uploadOverlay.style.display = 'none';
+        errorOverlay.style.display = 'block';
+        recStatus.textContent = 'error';
+        recStatus.className = 'badge badge-error';
+        setRecordButtonDisabled(false);
+        flipBtn.disabled = false;
       }
+    }
 
-      peerConn.send(JSON.stringify({ type: 'file-end' }));
-
-      // Show success
-      uploadOverlay.style.display = 'none';
-      successOverlay.style.display = 'block';
-      recStatus.textContent = 'sent';
-      recStatus.className = 'badge badge-upload';
-      setRecordButtonDisabled(false);
-      flipBtn.disabled = false;
-      chunks = [];
-
-      // Reset right slot controls
-      pauseBtn.disabled = true;
-      pauseBtn.innerHTML = '<i class="ti ti-player-pause"></i>';
-      pauseBtn.style.display = 'inline-flex';
-      uploadBtn.style.display = 'none';
-    });
+    uploadBtn.addEventListener('click', performUpload);
 
     // ── New recording / Close ─────────────────────────────────────
     function resetRecorderState() {
       successOverlay.style.display = 'none';
+      errorOverlay.style.display = 'none';
       recStatus.textContent = 'ready';
       recStatus.className = 'badge badge-idle';
       uploadBar.style.width = '0%';
@@ -746,6 +830,17 @@
       pauseBtn.innerHTML = '<i class="ti ti-player-pause"></i>';
       pauseBtn.style.display = 'inline-flex';
       uploadBtn.style.display = 'none';
+      btnRerecord.style.display = 'none';
+
+      // Revoke playback object URL and clear blob
+      if (playbackObjectUrl) {
+        URL.revokeObjectURL(playbackObjectUrl);
+        playbackObjectUrl = null;
+      }
+      playbackVideo.style.display = 'none';
+      playbackVideo.src = '';
+      lastRecordedBlob = null;
+      chunks = [];
 
       // Reset mobile metadata inputs
       document.getElementById('mobile-input-comment').value = '';
@@ -777,6 +872,43 @@
     btnScanQr.addEventListener('click', startScanner);
     btnCloseScanner.addEventListener('click', stopScanner);
 
+    // ── Play Recording button ─────────────────────────────────────
+    btnPlayRecording.addEventListener('click', () => {
+      if (!lastRecordedBlob) return;
+      if (playbackVideo.style.display === 'none') {
+        if (playbackObjectUrl) URL.revokeObjectURL(playbackObjectUrl);
+        playbackObjectUrl = URL.createObjectURL(lastRecordedBlob);
+        playbackVideo.src = playbackObjectUrl;
+        playbackVideo.style.display = 'block';
+        playbackVideo.play();
+        btnPlayRecording.innerHTML = '<i class="ti ti-player-stop"></i> Stop Playback';
+      } else {
+        playbackVideo.pause();
+        playbackVideo.style.display = 'none';
+        playbackVideo.src = '';
+        btnPlayRecording.innerHTML = '<i class="ti ti-player-play"></i> Play Recording';
+      }
+    });
+
+    // ── Re-record button (STOPPED state, discards blob) ──────────
+    btnRerecord.addEventListener('click', () => {
+      chunks = [];
+      lastRecordedBlob = null;
+      uploadBtn.style.display = 'none';
+      btnRerecord.style.display = 'none';
+      recStatus.textContent = 'ready';
+      recStatus.className = 'badge badge-idle';
+    });
+
+    // ── Retry upload button ───────────────────────────────────────
+    btnRetry.addEventListener('click', () => {
+      errorOverlay.style.display = 'none';
+      performUpload();
+    });
+
+    // ── Error overlay re-record button ────────────────────────────
+    btnErrorRerecord.addEventListener('click', resetRecorderState);
+
     // ── Metadata panel toggle ─────────────────────────────────────
     const btnToggleMetadata = document.getElementById('btn-toggle-metadata');
     const metadataInputs = document.getElementById('mobile-metadata-inputs');
@@ -794,6 +926,12 @@
 
     // ── Init ──────────────────────────────────────────────────────
     window.addEventListener('load', () => {
+      // Check MediaRecorder support before anything else
+      if (typeof MediaRecorder === 'undefined') {
+        document.querySelector('.mobile-container').style.display = 'none';
+        document.getElementById('unsupported-overlay').style.display = 'flex';
+        return;
+      }
       setTimeout(initCamera, 100);
     });
 
