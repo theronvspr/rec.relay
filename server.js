@@ -45,7 +45,8 @@ const ALLOWED_MIME = new Set([
 ]);
 
 const fileFilter = (_req, file, cb) => {
-  if (ALLOWED_MIME.has(file.mimetype)) {
+  const baseMime = (file.mimetype || '').split(';')[0].trim();
+  if (ALLOWED_MIME.has(baseMime)) {
     cb(null, true);
   } else {
     cb(new Error(`Unsupported MIME type: ${file.mimetype}`), false);
