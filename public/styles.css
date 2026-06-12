@@ -254,7 +254,12 @@ h3 { font-size: 15px; }
   border: 0.5px solid var(--color-border);
   background: #000;
 }
-.video-preview video { width: 100%; display: block; }
+.video-preview video {
+  width: 100%;
+  max-height: 450px;
+  object-fit: contain;
+  display: block;
+}
 
 /* ── Calendar ────────────────────────────────────────────────────── */
 .calendar-nav {
@@ -368,6 +373,10 @@ h3 { font-size: 15px; }
   align-items: center;
   justify-content: center;
   transition: border-color var(--duration-base) var(--ease-out-quart);
+  -webkit-appearance: none;
+  appearance: none;
+  overflow: hidden;
+  padding: 0;
 }
 .record-btn-inner {
   width: 44px;
@@ -406,6 +415,9 @@ h3 { font-size: 15px; }
   cursor: pointer;
   font-size: 18px;
   transition: background var(--duration-fast) var(--ease-out-quart);
+  -webkit-appearance: none;
+  appearance: none;
+  padding: 0;
 }
 .circle-btn:hover { background: var(--color-surface-active); }
 .circle-btn:disabled { opacity: 0.3; cursor: not-allowed; }

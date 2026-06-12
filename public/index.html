@@ -69,6 +69,10 @@
         <i class="ti ti-refresh"></i>
       </button>
 
+      <button id="btn-pause" class="circle-btn" style="display: none;" title="Pause recording">
+        <i class="ti ti-pause"></i>
+      </button>
+
       <div>
         <button id="btn-record" class="record-btn" disabled>
           <div class="record-btn-inner"></div>
@@ -110,6 +114,7 @@
     const recordBtn      = document.getElementById('btn-record');
     const uploadBtn      = document.getElementById('btn-upload');
     const flipBtn        = document.getElementById('btn-flip');
+    const pauseBtn       = document.getElementById('btn-pause');
     const recStatus      = document.getElementById('rec-status');
     const recTimer       = document.getElementById('rec-timer');
     const uploadOverlay  = document.getElementById('upload-overlay');
@@ -133,6 +138,7 @@
     let mediaRecorder = null;
     let chunks        = [];
     let isRecording   = false;
+    let isPaused      = false;
     let facingMode    = 'user';
     let timerInterval = null;
     let seconds       = 0;
@@ -333,16 +339,24 @@
 
       mediaRecorder.start(250);
       isRecording = true;
+      isPaused = false;
       document.querySelector('.mobile-container').classList.add('recording');
       recStatus.textContent = 'rec';
       recStatus.className = 'badge badge-error';
+
+      // Controls swap: show pause, hide flip
+      flipBtn.style.display = 'none';
+      pauseBtn.style.display = 'flex';
+      pauseBtn.innerHTML = '<i class="ti ti-pause"></i>';
 
       seconds = 0;
       recTimer.textContent = '00:00';
       recTimer.style.display = 'block';
       timerInterval = setInterval(() => {
-        seconds++;
-        recTimer.textContent = `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+        if (!isPaused) {
+          seconds++;
+          recTimer.textContent = `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+        }
       }, 1000);
 
       uploadBtn.style.display = 'none';
@@ -353,7 +367,13 @@
       if (!mediaRecorder || mediaRecorder.state === 'inactive') return;
       mediaRecorder.stop();
       isRecording = false;
+      isPaused = false;
       document.querySelector('.mobile-container').classList.remove('recording');
+      
+      // Controls swap: show flip, hide pause
+      flipBtn.style.display = 'flex';
+      pauseBtn.style.display = 'none';
+      
       clearInterval(timerInterval);
       recTimer.style.display = 'none';
     }
@@ -415,6 +435,25 @@
       uploadBar.style.width = '0%';
       uploadPct.textContent = '0%';
     }
+
+    // ── Pause / Resume Event ──────────────────────────────────────
+    pauseBtn.addEventListener('click', () => {
+      if (!isRecording || !mediaRecorder) return;
+      
+      if (!isPaused) {
+        mediaRecorder.pause();
+        isPaused = true;
+        recStatus.textContent = 'paused';
+        recStatus.className = 'badge badge-idle';
+        pauseBtn.innerHTML = '<i class="ti ti-player-play"></i>';
+      } else {
+        mediaRecorder.resume();
+        isPaused = false;
+        recStatus.textContent = 'rec';
+        recStatus.className = 'badge badge-error';
+        pauseBtn.innerHTML = '<i class="ti ti-pause"></i>';
+      }
+    });
 
     btnNew.addEventListener('click', resetRecorderState);
     btnCloseSuccess.addEventListener('click', resetRecorderState);
