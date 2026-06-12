@@ -126,7 +126,36 @@ app.post('/upload', upload.single('video'), (req, res) => {
   const createdAt = new Date().toISOString();
   const streamUrl = `/stream/${filename}`;
 
-  broadcast('new_file', { filename, size, createdAt, streamUrl });
+  // Parse metadata from req.body (populated by multer)
+  const comment = req.body.comment || '';
+  let tags = [];
+  try {
+    tags = req.body.tags ? JSON.parse(req.body.tags) : [];
+  } catch (e) {
+    if (typeof req.body.tags === 'string' && req.body.tags) {
+      tags = req.body.tags.split(',').map(t => t.trim()).filter(Boolean);
+    }
+  }
+  const musicLink = req.body.musicLink || '';
+
+  // Store in metadata.json
+  const meta = readMetadata();
+  meta[filename] = {
+    tags: Array.isArray(tags) ? tags.map(t => t.trim()).filter(Boolean) : [],
+    comment: typeof comment === 'string' ? comment.trim() : '',
+    musicLink: typeof musicLink === 'string' ? musicLink.trim() : ''
+  };
+  writeMetadata(meta);
+
+  broadcast('new_file', { 
+    filename, 
+    size, 
+    createdAt, 
+    streamUrl,
+    tags: meta[filename].tags,
+    comment: meta[filename].comment,
+    musicLink: meta[filename].musicLink
+  });
   res.json({ success: true, filename, streamUrl });
 });
 
@@ -160,19 +189,71 @@ app.get('/stream/:filename', (req, res) => {
   }
 });
 
+// ── Metadata Storage Helper ──────────────────────────────────────────
+const metadataPath = path.join(uploadDir, 'metadata.json');
+
+function readMetadata() {
+  try {
+    if (fs.existsSync(metadataPath)) {
+      return JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
+    }
+  } catch (err) {
+    console.error('Failed to read metadata.json:', err);
+  }
+  return {};
+}
+
+function writeMetadata(data) {
+  try {
+    fs.writeFileSync(metadataPath, JSON.stringify(data, null, 2), 'utf8');
+  } catch (err) {
+    console.error('Failed to write metadata.json:', err);
+  }
+}
+
 // ── File list ───────────────────────────────────────────────────────
 app.get('/files', (_req, res) => {
   fs.readdir(uploadDir, (err, files) => {
     if (err) return res.status(500).json({ success: false, message: 'Read error.' });
+    const metadata = readMetadata();
     const list = files
       .filter(f => f.startsWith('recording-'))
       .map(f => {
         const s = fs.statSync(path.join(uploadDir, f));
-        return { filename: f, size: s.size, createdAt: s.birthtime || s.mtime, streamUrl: `/stream/${f}` };
+        const meta = metadata[f] || {};
+        return {
+          filename: f,
+          size: s.size,
+          createdAt: s.birthtime || s.mtime,
+          streamUrl: `/stream/${f}`,
+          tags: meta.tags || [],
+          comment: meta.comment || '',
+          musicLink: meta.musicLink || ''
+        };
       })
       .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
     res.json(list);
   });
+});
+
+// ── Save File Metadata ──────────────────────────────────────────────
+app.post('/api/files/:filename/metadata', (req, res) => {
+  const { filename } = req.params;
+  const safePath = path.normalize(path.join(uploadDir, filename));
+  if (!safePath.startsWith(path.normalize(uploadDir))) return res.status(403).end();
+  if (!fs.existsSync(safePath)) return res.status(404).json({ success: false, message: 'File not found.' });
+
+  const { tags, comment, musicLink } = req.body;
+  const meta = readMetadata();
+  meta[filename] = {
+    tags: Array.isArray(tags) ? tags.map(t => t.trim()).filter(Boolean) : [],
+    comment: typeof comment === 'string' ? comment.trim() : '',
+    musicLink: typeof musicLink === 'string' ? musicLink.trim() : ''
+  };
+  writeMetadata(meta);
+
+  broadcast('update_file_metadata', { filename, metadata: meta[filename] });
+  res.json({ success: true, metadata: meta[filename] });
 });
 
 // ── Delete ──────────────────────────────────────────────────────────
@@ -183,6 +264,14 @@ app.delete('/files/:filename', (req, res) => {
 
   fs.unlink(safePath, err => {
     if (err) return res.status(500).json({ success: false, message: 'Delete failed.' });
+
+    // Prune from metadata
+    const meta = readMetadata();
+    if (meta[req.params.filename]) {
+      delete meta[req.params.filename];
+      writeMetadata(meta);
+    }
+
     broadcast('delete_file', { filename: req.params.filename });
     res.json({ success: true });
   });

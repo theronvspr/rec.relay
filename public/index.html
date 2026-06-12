@@ -96,6 +96,31 @@
       </div>
     </div>
 
+    <!-- Divider and Metadata Input Area -->
+    <div style="border-top: 0.5px dashed var(--color-border); margin-top: var(--space-4); padding-top: var(--space-4);">
+      <div id="btn-toggle-metadata" style="display: flex; align-items: center; justify-content: space-between; cursor: pointer; user-select: none;">
+        <span style="font-size: 11px; color: var(--ink-secondary); text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600;">Clip Metadata (Optional)</span>
+        <span id="metadata-toggle-icon" style="font-size: 14px; color: var(--ink-muted); transition: transform var(--duration-base); display: inline-flex;"><i class="ti ti-chevron-down"></i></span>
+      </div>
+
+      <div id="mobile-metadata-inputs" style="display: none;">
+        <div class="mobile-input-group" style="margin-top: var(--space-3); margin-bottom: var(--space-3);">
+          <label style="display: block; font-size: 10px; color: var(--ink-muted); text-transform: uppercase; margin-bottom: 4px; font-weight: 600;">Comment</label>
+          <textarea id="mobile-input-comment" placeholder="Add details or notes about this clip..." style="width: 100%; height: 72px; font-family: var(--font-mono); font-size: 12px; padding: var(--space-2); background: var(--color-surface); border: 0.5px solid var(--color-border); border-radius: var(--radius-sm); color: var(--ink-primary); outline: none; resize: none;"></textarea>
+        </div>
+
+        <div class="mobile-input-group" style="margin-bottom: var(--space-3);">
+          <label style="display: block; font-size: 10px; color: var(--ink-muted); text-transform: uppercase; margin-bottom: 4px; font-weight: 600;">Tags (comma-separated)</label>
+          <input type="text" id="mobile-input-tags" placeholder="e.g. vocals, practice, draft" style="width: 100%; font-family: var(--font-mono); font-size: 12px; padding: var(--space-2); background: var(--color-surface); border: 0.5px solid var(--color-border); border-radius: var(--radius-sm); color: var(--ink-primary); outline: none;">
+        </div>
+
+        <div class="mobile-input-group" style="margin-bottom: var(--space-3);">
+          <label style="display: block; font-size: 10px; color: var(--ink-muted); text-transform: uppercase; margin-bottom: 4px; font-weight: 600;">Music Reference Link (Spotify / Apple Music)</label>
+          <input type="text" id="mobile-input-music" placeholder="Paste track or album link..." style="width: 100%; font-family: var(--font-mono); font-size: 12px; padding: var(--space-2); background: var(--color-surface); border: 0.5px solid var(--color-border); border-radius: var(--radius-sm); color: var(--ink-primary); outline: none;">
+        </div>
+      </div>
+    </div>
+
     <!-- Version footer -->
     <div style="text-align: center; margin-top: auto; padding: var(--space-4) 0 0 0; font-size: 10px; color: var(--ink-muted); font-family: var(--font-mono);">
       v3.2.0
@@ -648,6 +673,14 @@
     uploadBtn.addEventListener('click', async () => {
       if (!chunks.length || !peerConn || !peerConn.open) return;
 
+      const commentVal = document.getElementById('mobile-input-comment').value.trim();
+      const tagsVal = document.getElementById('mobile-input-tags').value;
+      const musicVal = document.getElementById('mobile-input-music').value.trim();
+
+      const tagsArray = tagsVal.split(',')
+        .map(t => t.trim())
+        .filter(t => t.length > 0);
+
       const mime = mediaRecorder?.mimeType || 'video/webm';
       const ext = mime.includes('mp4') ? 'mp4' : 'webm';
       const blob = new Blob(chunks, { type: mime });
@@ -663,7 +696,10 @@
         type: 'file-start',
         filename: `recording-${Date.now()}.${ext}`,
         mimeType: mime,
-        totalSize: arrayBuffer.byteLength
+        totalSize: arrayBuffer.byteLength,
+        comment: commentVal,
+        tags: tagsArray,
+        musicLink: musicVal
       }));
 
       // Send in 64KB chunks
@@ -710,6 +746,11 @@
       pauseBtn.innerHTML = '<i class="ti ti-player-pause"></i>';
       pauseBtn.style.display = 'inline-flex';
       uploadBtn.style.display = 'none';
+
+      // Reset mobile metadata inputs
+      document.getElementById('mobile-input-comment').value = '';
+      document.getElementById('mobile-input-tags').value = '';
+      document.getElementById('mobile-input-music').value = '';
     }
 
     // ── Pause / Resume Event ──────────────────────────────────────
@@ -735,6 +776,21 @@
     btnCloseSuccess.addEventListener('click', resetRecorderState);
     btnScanQr.addEventListener('click', startScanner);
     btnCloseScanner.addEventListener('click', stopScanner);
+
+    // ── Metadata panel toggle ─────────────────────────────────────
+    const btnToggleMetadata = document.getElementById('btn-toggle-metadata');
+    const metadataInputs = document.getElementById('mobile-metadata-inputs');
+    const metadataToggleIcon = document.getElementById('metadata-toggle-icon');
+
+    btnToggleMetadata.addEventListener('click', () => {
+      if (metadataInputs.style.display === 'none') {
+        metadataInputs.style.display = 'block';
+        metadataToggleIcon.style.transform = 'rotate(180deg)';
+      } else {
+        metadataInputs.style.display = 'none';
+        metadataToggleIcon.style.transform = 'rotate(0deg)';
+      }
+    });
 
     // ── Init ──────────────────────────────────────────────────────
     window.addEventListener('load', () => {

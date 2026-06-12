@@ -86,6 +86,13 @@
           None
         </div>
       </div>
+      <!-- Tag filtering sidebar card -->
+      <div class="card" style="margin-top: var(--space-4);">
+        <p style="font-size: 11px; color: var(--ink-muted); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: var(--space-2);">Filter by Tag</p>
+        <div id="tags-filter-container" style="display: flex; flex-wrap: wrap; gap: var(--space-1);">
+          <span style="font-size: 11px; color: var(--ink-muted);">No tags defined yet</span>
+        </div>
+      </div>
       <!-- Version footer -->
       <div style="text-align: center; margin-top: var(--space-4); font-size: 10px; color: var(--ink-muted); font-family: var(--font-mono);">
         v3.2.0
@@ -140,14 +147,18 @@
     const LOCAL_BASE = window.location.origin; // http://localhost:3000
 
     // Prevent running dashboard remotely on GitHub Pages
-    if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+    const hostname = window.location.hostname;
+    const isLocal = hostname === 'localhost' || hostname === '127.0.0.1';
+    const isNgrok = hostname.endsWith('.ngrok-free.dev') || hostname.endsWith('.ngrok.io');
+    if (!isLocal && !isNgrok) {
       document.getElementById('host-warning').style.display = 'flex';
-      throw new Error('rec.relay: Dashboard must be run on localhost, not GitHub Pages.');
+      throw new Error('rec.relay: Dashboard must be run on localhost or via ngrok, not GitHub Pages.');
     }
 
     // ── State ─────────────────────────────────────────────────────
     let allFiles = [];
     let selectedDate = null;
+    let selectedTag = null;
     let calendarDate = new Date();
     let myPeerId = null;
     let connectedPeers = new Map(); // peerId -> connection
@@ -234,7 +245,10 @@
             mimeType: msg.mimeType,
             totalSize: msg.totalSize,
             received: 0,
-            buffers: []
+            buffers: [],
+            comment: msg.comment || '',
+            tags: msg.tags || [],
+            musicLink: msg.musicLink || ''
           };
           showToast(`Receiving ${msg.filename}...`);
         }
@@ -243,7 +257,11 @@
           console.log(`Finished receiving file: ${incomingFile.filename}. Total received size: ${incomingFile.received} bytes. Assembling blob...`);
           // Assemble blob and upload to localhost
           const blob = new Blob(incomingFile.buffers, { type: incomingFile.mimeType });
-          uploadToLocalServer(blob, incomingFile.filename);
+          uploadToLocalServer(blob, incomingFile.filename, {
+            comment: incomingFile.comment,
+            tags: incomingFile.tags,
+            musicLink: incomingFile.musicLink
+          });
           incomingFile = null;
         }
       } else if (incomingFile) {
@@ -254,9 +272,12 @@
     }
 
     // ── Upload received blob to localhost ──────────────────────────
-    async function uploadToLocalServer(blob, filename) {
+    async function uploadToLocalServer(blob, filename, metadata = {}) {
       const formData = new FormData();
       formData.append('video', blob, filename);
+      formData.append('comment', metadata.comment || '');
+      formData.append('tags', JSON.stringify(metadata.tags || []));
+      formData.append('musicLink', metadata.musicLink || '');
 
       try {
         const res = await fetch(`${LOCAL_BASE}/upload`, { method: 'POST', body: formData });
@@ -313,12 +334,162 @@
     btnCloseQr.addEventListener('click', () => { qrModal.style.display = 'none'; });
     qrModal.addEventListener('click', e => { if (e.target === qrModal) qrModal.style.display = 'none'; });
 
+    // ── HTML Escaping helper ──────────────────────────────────────
+    function escapeHtml(str) {
+      if (!str) return '';
+      return str
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    // ── Music reference renderer ──────────────────────────────────
+    function renderMusicPlayer(url) {
+      if (!url) return '';
+      url = url.trim();
+      
+      const spotifyRegex = /https:\/\/open\.spotify\.com\/(track|album|playlist|artist)\/([a-zA-Z0-9]+)/i;
+      const spotifyMatch = url.match(spotifyRegex);
+      if (spotifyMatch) {
+        const type = spotifyMatch[1];
+        const id = spotifyMatch[2];
+        return `<iframe src="https://open.spotify.com/embed/${type}/${id}" 
+          width="100%" 
+          height="80" 
+          frameborder="0" 
+          allowtransparency="true" 
+          allow="encrypted-media"
+          style="border-radius: 6px; margin-top: 8px; border: none; display: block;"></iframe>`;
+      }
+
+      const appleRegex = /https:\/\/music\.apple\.com\/([a-z]{2})\/(album|playlist|song)\/([a-zA-Z0-9\-]+)\/([a-zA-Z0-9\.]+)/i;
+      if (appleRegex.test(url)) {
+        const embedUrl = url.replace('music.apple.com', 'embed.music.apple.com');
+        return `<iframe src="${embedUrl}" 
+          width="100%" 
+          height="150" 
+          frameborder="0" 
+          allowtransparency="true" 
+          allow="encrypted-media"
+          style="border-radius: 6px; margin-top: 8px; border: none; display: block;"></iframe>`;
+      }
+
+      const appleAlbumRegex = /https:\/\/music\.apple\.com\/([a-z]{2})\/(album|playlist)\/([a-zA-Z0-9\.\-]+)/i;
+      if (appleAlbumRegex.test(url)) {
+        const embedUrl = url.replace('music.apple.com', 'embed.music.apple.com');
+        return `<iframe src="${embedUrl}" 
+          width="100%" 
+          height="150" 
+          frameborder="0" 
+          allowtransparency="true" 
+          allow="encrypted-media"
+          style="border-radius: 6px; margin-top: 8px; border: none; display: block;"></iframe>`;
+      }
+
+      return `<div style="font-size: 11px; color: var(--color-danger); margin-top: 4px; font-family: var(--font-mono);">Unsupported link. Use a Spotify or Apple Music link.</div>`;
+    }
+
+    // ── Metadata editing handlers ─────────────────────────────────
+    window.toggleEditPanel = function(filename, event) {
+      if (event) event.stopPropagation();
+      const safeId = filename.replace(/\./g, '_');
+      const panel = document.getElementById(`edit-panel-${safeId}`);
+      const display = document.getElementById(`meta-display-${safeId}`);
+      const icon = document.getElementById(`edit-icon-${safeId}`);
+
+      if (panel.style.display === 'none') {
+        panel.style.display = 'flex';
+        display.style.display = 'none';
+        icon.className = 'ti ti-x';
+      } else {
+        panel.style.display = 'none';
+        display.style.display = 'flex';
+        icon.className = 'ti ti-edit';
+      }
+    };
+
+    window.saveMetadata = async function(filename, event) {
+      if (event) event.stopPropagation();
+      const safeId = filename.replace(/\./g, '_');
+      const commentVal = document.getElementById(`input-comment-${safeId}`).value.trim();
+      const tagsVal = document.getElementById(`input-tags-${safeId}`).value;
+      const musicVal = document.getElementById(`input-music-${safeId}`).value.trim();
+
+      const tagsArray = tagsVal.split(',')
+        .map(t => t.trim())
+        .filter(t => t.length > 0);
+
+      try {
+        const response = await fetch(`/api/files/${filename}/metadata`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ comment: commentVal, tags: tagsArray, musicLink: musicVal })
+        });
+
+        const json = await response.json();
+        if (json.success) {
+          showToast('Details updated');
+          const file = allFiles.find(f => f.filename === filename);
+          if (file) {
+            file.comment = json.metadata.comment;
+            file.tags = json.metadata.tags;
+            file.musicLink = json.metadata.musicLink;
+          }
+          toggleEditPanel(filename);
+          renderCalendar();
+          renderTagsSidebar();
+          renderFiles();
+        } else {
+          showToast('Failed to update details');
+        }
+      } catch (err) {
+        console.error('Error saving metadata:', err);
+        showToast('Error saving details');
+      }
+    };
+
+    // ── Sidebar Tag Compiler ──────────────────────────────────────
+    function renderTagsSidebar() {
+      const tagsContainer = document.getElementById('tags-filter-container');
+      if (!tagsContainer) return;
+
+      const allTagsSet = new Set();
+      allFiles.forEach(f => {
+        if (f.tags && Array.isArray(f.tags)) {
+          f.tags.forEach(t => {
+            if (t.trim()) allTagsSet.add(t.trim());
+          });
+        }
+      });
+
+      const uniqueTags = Array.from(allTagsSet).sort();
+
+      if (uniqueTags.length === 0) {
+        tagsContainer.innerHTML = '<span style="font-size: 11px; color: var(--ink-muted);">No tags defined yet</span>';
+        return;
+      }
+
+      tagsContainer.innerHTML = uniqueTags.map(tag => {
+        const isActive = tag === selectedTag;
+        return `<span class="filter-tag-chip ${isActive ? 'active' : ''}" onclick="toggleTagFilter('${escapeHtml(tag)}')">#${escapeHtml(tag)}</span>`;
+      }).join('');
+    }
+
+    window.toggleTagFilter = function(tag) {
+      selectedTag = selectedTag === tag ? null : tag;
+      renderTagsSidebar();
+      renderFiles();
+    };
+
     // ── File loading ──────────────────────────────────────────────
     async function loadFiles() {
       try {
         const res = await fetch('/files');
         allFiles = await res.json();
         renderCalendar();
+        renderTagsSidebar();
         renderFiles();
       } catch (err) {
         console.error('Load files error:', err);
@@ -328,17 +499,25 @@
 
     // ── Render files list ─────────────────────────────────────────
     function renderFiles() {
-      const filtered = selectedDate
-        ? allFiles.filter(f => new Date(f.createdAt).toISOString().split('T')[0] === selectedDate)
-        : allFiles;
+      let filtered = allFiles;
+      if (selectedDate) {
+        filtered = filtered.filter(f => new Date(f.createdAt).toISOString().split('T')[0] === selectedDate);
+      }
+      if (selectedTag) {
+        filtered = filtered.filter(f => f.tags && f.tags.includes(selectedTag));
+      }
 
       if (selectedDate) {
         const d = new Date(selectedDate + 'T00:00:00');
         listTitle.textContent = d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-        listSubtitle.textContent = 'Recordings from this day';
+        listSubtitle.textContent = selectedTag 
+          ? `Recordings from this day tagged with #${selectedTag}` 
+          : 'Recordings from this day';
       } else {
-        listTitle.textContent = 'All recordings';
-        listSubtitle.textContent = 'Showing all stored files';
+        listTitle.textContent = selectedTag ? `Tag: #${selectedTag}` : 'All recordings';
+        listSubtitle.textContent = selectedTag 
+          ? `Recordings tagged with #${selectedTag}` 
+          : 'Showing all stored files';
       }
 
       fileCount.textContent = `${filtered.length} file${filtered.length !== 1 ? 's' : ''}`;
@@ -368,8 +547,45 @@
           <div class="file-info">
             <div class="file-name">${f.filename}</div>
             <div class="file-meta">${size} &middot; ${time} &middot; <span class="badge badge-${ext}">${ext}</span></div>
+            
+            <!-- Metadata display -->
+            <div class="metadata-display" id="meta-display-${safeId}">
+              <div class="comment-text" id="comment-${safeId}" style="display: ${f.comment ? 'flex' : 'none'};">
+                <i class="ti ti-quote"></i> <span class="comment-content">${escapeHtml(f.comment)}</span>
+              </div>
+              <div class="tags-list" id="tags-${safeId}" style="display: ${f.tags && f.tags.length ? 'flex' : 'none'};">
+                ${(f.tags || []).map(t => `<span class="tag-pill">#${escapeHtml(t)}</span>`).join('')}
+              </div>
+              <div class="music-preview-container" id="music-${safeId}" style="display: ${f.musicLink ? 'block' : 'none'};">
+                ${f.musicLink ? renderMusicPlayer(f.musicLink) : ''}
+              </div>
+            </div>
+
+            <!-- Inline Edit Panel -->
+            <div class="metadata-edit-panel" id="edit-panel-${safeId}" style="display: none;" onclick="event.stopPropagation();">
+              <div class="input-group">
+                <label>Comment</label>
+                <input type="text" id="input-comment-${safeId}" value="${escapeHtml(f.comment || '')}" placeholder="Add a short comment...">
+              </div>
+              <div class="input-group">
+                <label>Tags (comma-separated)</label>
+                <input type="text" id="input-tags-${safeId}" value="${escapeHtml((f.tags || []).join(', '))}" placeholder="e.g. vocals, guitar, draft">
+              </div>
+              <div class="input-group">
+                <label>Music Reference Link (Spotify / Apple Music)</label>
+                <input type="text" id="input-music-${safeId}" value="${escapeHtml(f.musicLink || '')}" placeholder="e.g. https://open.spotify.com/track/... or https://music.apple.com/...">
+              </div>
+              <div class="edit-actions">
+                <button class="btn btn-primary btn-small" onclick="saveMetadata('${f.filename}', event)">Save</button>
+                <button class="btn btn-ghost btn-small" onclick="toggleEditPanel('${f.filename}', event)">Cancel</button>
+              </div>
+            </div>
+
           </div>
           <div class="file-actions">
+            <button class="btn btn-ghost btn-small" onclick="toggleEditPanel('${f.filename}', event)" title="Edit Details">
+              <i class="ti ti-edit" id="edit-icon-${safeId}"></i>
+            </button>
             <button class="btn btn-ghost btn-small" onclick="togglePreview('${f.filename}')" title="Preview">
               <i class="ti ti-player-play" id="play-icon-${safeId}"></i>
             </button>
@@ -467,7 +683,9 @@
     nextMonth.addEventListener('click', () => { calendarDate.setMonth(calendarDate.getMonth() + 1); renderCalendar(); });
     btnAll.addEventListener('click', () => {
       selectedDate = null;
+      selectedTag = null;
       document.querySelectorAll('.calendar-day.selected').forEach(c => c.classList.remove('selected'));
+      renderTagsSidebar();
       renderFiles();
     });
     btnRefresh.addEventListener('click', () => { loadFiles(); showToast('Refreshed'); });
@@ -478,13 +696,31 @@
       src.onmessage = (e) => {
         const msg = JSON.parse(e.data);
         if (msg.type === 'new_file') {
-          allFiles.unshift(msg.data);
+          const newFile = {
+            ...msg.data,
+            tags: [],
+            comment: '',
+            musicLink: ''
+          };
+          allFiles.unshift(newFile);
           renderCalendar();
+          renderTagsSidebar();
           renderFiles();
         } else if (msg.type === 'delete_file') {
           allFiles = allFiles.filter(f => f.filename !== msg.data.filename);
           renderCalendar();
+          renderTagsSidebar();
           renderFiles();
+        } else if (msg.type === 'update_file_metadata') {
+          const file = allFiles.find(f => f.filename === msg.data.filename);
+          if (file) {
+            file.tags = msg.data.metadata.tags;
+            file.comment = msg.data.metadata.comment;
+            file.musicLink = msg.data.metadata.musicLink;
+            renderCalendar();
+            renderTagsSidebar();
+            renderFiles();
+          }
         }
       };
       src.onerror = () => { src.close(); setTimeout(initSSE, 5000); };
