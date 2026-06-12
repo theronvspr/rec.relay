@@ -6,11 +6,22 @@ import http from 'http';
 import os from 'os';
 import QRCode from 'qrcode';
 import { exec } from 'child_process';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const APP_VERSION = '3.0.0';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const HOST = '127.0.0.1'; // Bind to loopback only — no firewall rules needed
-const uploadDir = './uploads';
+
+let uploadDir = path.join(__dirname, 'uploads');
+if (process.env.RUNNING_IN_ELECTRON && process.env.ELECTRON_USER_DATA) {
+  uploadDir = path.join(process.env.ELECTRON_USER_DATA, 'uploads');
+} else {
+  uploadDir = path.resolve(process.cwd(), 'uploads');
+}
 
 // Ensure upload directory exists
 if (!fs.existsSync(uploadDir)) {
@@ -33,7 +44,8 @@ const upload = multer({
 
 // ── Middleware ───────────────────────────────────────────────────────
 app.use(express.json());
-app.use(express.static('public'));
+const publicDir = path.join(__dirname, 'public');
+app.use(express.static(publicDir));
 
 // ── SSE (Server-Sent Events) ────────────────────────────────────────
 let sseClients = [];
@@ -81,9 +93,30 @@ app.get('/api/server-info', (_req, res) => {
   res.json({ success: true, localIPs: ips, port: PORT });
 });
 
+// ── API: Check for updates via GitHub ──────────────────────────────
+app.get('/api/check-update', async (_req, res) => {
+  try {
+    const response = await fetch('https://api.github.com/repos/theronvspr/rec.relay/releases/latest', {
+      headers: { 'User-Agent': 'rec.relay-app' }
+    });
+    if (response.status === 404) {
+      return res.json({ success: true, latestVersion: null, currentVersion: APP_VERSION });
+    }
+    if (!response.ok) {
+      throw new Error(`GitHub API returned status ${response.status}`);
+    }
+    const data = await response.json();
+    const latestVersion = data.tag_name ? data.tag_name.replace(/^v/, '') : '';
+    res.json({ success: true, latestVersion, currentVersion: APP_VERSION });
+  } catch (err) {
+    console.error('Update check failed:', err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 // ── Pages ───────────────────────────────────────────────────────────
-app.get('/', (_req, res) => res.sendFile(path.resolve('public/index.html')));
-app.get('/dashboard', (_req, res) => res.sendFile(path.resolve('public/dashboard.html')));
+app.get('/', (_req, res) => res.sendFile(path.join(publicDir, 'index.html')));
+app.get('/dashboard', (_req, res) => res.sendFile(path.join(publicDir, 'dashboard.html')));
 
 // ── Upload ──────────────────────────────────────────────────────────
 app.post('/upload', upload.single('video'), (req, res) => {
@@ -188,5 +221,7 @@ server.listen(PORT, HOST, () => {
   }
   console.log('');
 
-  openBrowser(`http://localhost:${PORT}/dashboard`);
+  if (!process.env.RUNNING_IN_ELECTRON) {
+    openBrowser(`http://localhost:${PORT}/dashboard`);
+  }
 });

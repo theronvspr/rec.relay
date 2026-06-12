@@ -1,12 +1,17 @@
 {
   "name": "rec.relay",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "description": "Record on mobile, land on PC, over LAN. WebRTC peer-to-peer video relay.",
-  "main": "server.js",
+  "main": "main.js",
   "type": "module",
+  "bin": {
+    "rec-relay": "./bin/cli.js"
+  },
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "electron:start": "electron .",
+    "electron:build": "electron-builder --win"
   },
   "dependencies": {
     "express": "^4.18.2",
@@ -14,6 +19,34 @@
     "qrcode": "^1.5.3"
   },
   "devDependencies": {
+    "electron": "^30.5.1",
+    "electron-builder": "^24.13.3",
     "nodemon": "^3.0.1"
+  },
+  "build": {
+    "appId": "com.theronvspr.recrelay",
+    "productName": "rec.relay",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "package.json",
+      "main.js",
+      "server.js",
+      "bin/**/*",
+      "public/**/*"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
   }
 }
