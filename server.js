@@ -6,12 +6,12 @@ import fs from 'fs';
 import http from 'http';
 import os from 'os';
 import QRCode from 'qrcode';
-import { exec } from 'child_process';
+import { exec, spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const APP_VERSION = '3.4.0';
+const APP_VERSION = '3.4.1';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -961,6 +961,109 @@ function openBrowser(url) {
   exec(full, err => { if (err) console.error(`Auto-open failed: ${err.message}`); });
 };
 
+let headlessBrowserProcess = null;
+
+function findSystemBrowser() {
+  const platform = process.platform;
+  const paths = [];
+
+  if (platform === 'win32') {
+    const programFiles = process.env['ProgramFiles'] || 'C:\\Program Files';
+    const programFilesX86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
+    const localAppData = process.env['LOCALAPPDATA'] || path.join(process.env['USERPROFILE'] || 'C:\\Users\\Default', 'AppData\\Local');
+
+    paths.push(
+      path.join(programFiles, 'Google\\Chrome\\Application\\chrome.exe'),
+      path.join(programFilesX86, 'Google\\Chrome\\Application\\chrome.exe'),
+      path.join(localAppData, 'Google\\Chrome\\Application\\chrome.exe'),
+      path.join(programFilesX86, 'Microsoft\\Edge\\Application\\msedge.exe'),
+      path.join(programFiles, 'Microsoft\\Edge\\Application\\msedge.exe'),
+      path.join(programFiles, 'BraveSoftware\\Brave-Browser\\Application\\brave.exe'),
+      path.join(programFilesX86, 'BraveSoftware\\Brave-Browser\\Application\\brave.exe')
+    );
+  } else if (platform === 'darwin') {
+    paths.push(
+      '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+      '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+      '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser'
+    );
+  } else {
+    paths.push(
+      '/usr/bin/google-chrome',
+      '/usr/bin/chromium',
+      '/usr/bin/chromium-browser',
+      '/usr/bin/brave-browser',
+      '/usr/bin/brave'
+    );
+  }
+
+  for (const p of paths) {
+    if (fs.existsSync(p)) {
+      return p;
+    }
+  }
+  return null;
+}
+
+function startHeadlessBrowser(port) {
+  const browserPath = findSystemBrowser();
+  if (!browserPath) {
+    return;
+  }
+
+  const args = [
+    '--headless=new',
+    '--disable-gpu',
+    '--mute-audio',
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--disable-extensions',
+    '--disable-background-networking',
+    `http://localhost:${port}/cli-receiver.html`
+  ];
+
+  try {
+    headlessBrowserProcess = spawn(browserPath, args, { stdio: 'ignore', detached: false });
+    
+    headlessBrowserProcess.on('error', (err) => {
+      console.error('Headless browser failed to start:', err.message);
+    });
+
+    headlessBrowserProcess.on('exit', () => {
+      headlessBrowserProcess = null;
+    });
+  } catch (err) {
+    console.error('Failed to spawn headless browser:', err);
+  }
+}
+
+function setupExitHandlers() {
+  const cleanExit = () => {
+    if (headlessBrowserProcess) {
+      try {
+        headlessBrowserProcess.kill();
+      } catch (e) {
+        // Ignore
+      }
+      headlessBrowserProcess = null;
+    }
+    process.exit();
+  };
+
+  process.on('SIGINT', cleanExit);
+  process.on('SIGTERM', cleanExit);
+  process.on('SIGHUP', cleanExit);
+  process.on('exit', () => {
+    if (headlessBrowserProcess) {
+      try {
+        headlessBrowserProcess.kill();
+      } catch (e) {
+        // Ignore
+      }
+    }
+  });
+}
+
 // ── Global error handler ────────────────────────────────────────────
 app.use((err, _req, res, _next) => {
   if (err.code === 'LIMIT_FILE_SIZE') {
@@ -994,6 +1097,8 @@ server.on('listening', () => {
   }
 
   if (process.env.RUNNING_AS_CLI === 'true') {
+    setupExitHandlers();
+    startHeadlessBrowser(boundPort);
     initCliMode(boundPort);
     return;
   }

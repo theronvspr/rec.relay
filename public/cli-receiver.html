@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>rec.relay — CLI Headless Receiver</title>
+</head>
+<body>
+  <!-- Blank page, runs headless WebRTC receiver script -->
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script>
+    const LOCAL_BASE = window.location.origin;
+    let myPeerId = null;
+    let connectedPeers = new Map();
+    let incomingFile = null;
+
+    // ── SSE connection to keep server connection status synced ──
+    function initSSE() {
+      const src = new EventSource('/events');
+      src.onmessage = (e) => {
+        // Just keeping the connection active
+      };
+      src.onerror = () => {
+        src.close();
+        setTimeout(initSSE, 5000);
+      };
+    }
+    initSSE();
+
+    // ── PeerJS Setup ──
+    const peer = new Peer();
+
+    peer.on('open', (id) => {
+      myPeerId = id;
+      console.log('PeerJS connected. Peer ID:', id);
+      sendPeersCountToServer(0);
+    });
+
+    peer.on('connection', (conn) => {
+      const peerId = conn.peer;
+
+      conn.on('open', () => {
+        connectedPeers.set(peerId, conn);
+        console.log('Phone connected via WebRTC. Total:', connectedPeers.size);
+        sendPeersCountToServer(connectedPeers.size);
+      });
+
+      conn.on('data', (data) => {
+        handleIncomingData(data, peerId);
+      });
+
+      conn.on('close', () => {
+        connectedPeers.delete(peerId);
+        console.log('Phone disconnected. Total:', connectedPeers.size);
+        sendPeersCountToServer(connectedPeers.size);
+      });
+
+      conn.on('error', (err) => {
+        console.error('Data connection error:', err);
+        connectedPeers.delete(peerId);
+        sendPeersCountToServer(connectedPeers.size);
+      });
+    });
+
+    peer.on('error', (err) => {
+      console.error('PeerJS error:', err);
+    });
+
+    function handleIncomingData(data, peerId) {
+      if (typeof data === 'string') {
+        const msg = JSON.parse(data);
+
+        if (msg.type === 'file-start') {
+          console.log(`Receiving file: ${msg.filename} (${msg.totalSize} bytes)`);
+          incomingFile = {
+            filename: msg.filename,
+            mimeType: msg.mimeType,
+            totalSize: msg.totalSize,
+            received: 0,
+            buffers: [],
+            comment: msg.comment || '',
+            tags: msg.tags || [],
+            musicLink: msg.musicLink || ''
+          };
+        }
+
+        if (msg.type === 'file-end' && incomingFile) {
+          console.log(`Finished receiving file. Assembling and uploading to server...`);
+          const blob = new Blob(incomingFile.buffers, { type: incomingFile.mimeType });
+          uploadToLocalServer(blob, incomingFile.filename, {
+            comment: incomingFile.comment,
+            tags: incomingFile.tags,
+            musicLink: incomingFile.musicLink
+          });
+          incomingFile = null;
+        }
+      } else if (incomingFile) {
+        incomingFile.buffers.push(data);
+        const chunkSize = data.byteLength || data.size || 0;
+        incomingFile.received += chunkSize;
+      }
+    }
+
+    async function uploadToLocalServer(blob, filename, metadata = {}) {
+      const formData = new FormData();
+      formData.append('video', blob, filename);
+      formData.append('comment', metadata.comment || '');
+      formData.append('tags', JSON.stringify(metadata.tags || []));
+      formData.append('musicLink', metadata.musicLink || '');
+
+      try {
+        const res = await fetch(`${LOCAL_BASE}/upload`, { method: 'POST', body: formData });
+        const json = await res.json();
+        if (json.success) {
+          console.log(`Saved ${json.filename} to local disk successfully.`);
+        } else {
+          console.error('Save failed on local server.');
+        }
+      } catch (err) {
+        console.error('Local upload error:', err);
+      }
+    }
+
+    async function sendPeersCountToServer(count) {
+      try {
+        await fetch(`${LOCAL_BASE}/api/peers-count`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ count, peerId: myPeerId })
+        });
+      } catch (e) {
+        console.error('Failed to report peer count:', e);
+      }
+    }
+
+    window.addEventListener('beforeunload', () => {
+      const payload = JSON.stringify({ count: 0 });
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon(`${LOCAL_BASE}/api/peers-count`, payload);
+      }
+    });
+  </script>
+</body>
+</html>
