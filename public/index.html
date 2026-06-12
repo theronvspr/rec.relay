@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>rec.relay</title>
   <meta name="description" content="Record on mobile, land on PC, over LAN.">
-  <link rel="stylesheet" href="styles.css?v=2.0.5">
+  <link rel="stylesheet" href="styles.css?v=2.0.6">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css">
 </head>
 <body>
@@ -76,18 +76,20 @@
         <button id="btn-flip" class="circle-btn" title="Flip camera">
           <i class="ti ti-refresh"></i>
         </button>
-        <button id="btn-pause" class="circle-btn" disabled title="Pause recording">
-          <i class="ti ti-player-pause"></i>
-        </button>
       </div>
 
       <div class="control-slot center">
-        <button id="btn-record" class="record-btn" disabled>
-          <div class="record-btn-inner"></div>
-        </button>
+        <div class="record-btn-container disabled">
+          <button id="btn-record" class="record-btn" disabled>
+            <div class="record-btn-inner"></div>
+          </button>
+        </div>
       </div>
 
       <div class="control-slot right">
+        <button id="btn-pause" class="circle-btn" disabled title="Pause recording">
+          <i class="ti ti-player-pause"></i>
+        </button>
         <button id="btn-upload" class="circle-btn" style="background: var(--color-upload-bg); border-color: var(--color-primary); color: var(--color-primary); display: none;" title="Send to PC">
           <i class="ti ti-upload"></i>
         </button>
@@ -96,7 +98,7 @@
 
     <!-- Version footer -->
     <div style="text-align: center; margin-top: auto; padding: var(--space-4) 0 0 0; font-size: 10px; color: var(--ink-muted); font-family: var(--font-mono);">
-      v2.0.5
+      v2.0.6
     </div>
 
   </div>
@@ -130,7 +132,7 @@
 
   <script>
     // ── Version ───────────────────────────────────────────────────
-    const APP_VERSION = '2.0.5';
+    const APP_VERSION = '2.0.6';
 
     // ── Elements ──────────────────────────────────────────────────
     const viewfinder     = document.getElementById('viewfinder');
@@ -173,6 +175,7 @@
     let peerConn      = null; // WebRTC data connection to PC
     let videoDevices  = [];
     let currentDeviceIndex = 0;
+    let isInitializingCamera = false;
 
     // ── Helpers ───────────────────────────────────────────────────
     function getFriendlyCameraName(label, index) {
@@ -206,6 +209,18 @@
       }, 3000);
     }
 
+    function setRecordButtonDisabled(state) {
+      recordBtn.disabled = state;
+      const container = document.querySelector('.record-btn-container');
+      if (container) {
+        if (state) {
+          container.classList.add('disabled');
+        } else {
+          container.classList.remove('disabled');
+        }
+      }
+    }
+
     // ── WebRTC: connect to PC peer ────────────────────────────────
     let peer = null;
 
@@ -222,7 +237,7 @@
       connDot.className = 'status-dot waiting';
       connText.textContent = 'Connecting to PC...';
       btnScanQr.style.display = 'none';
-      recordBtn.disabled = true;
+      setRecordButtonDisabled(true);
 
       peer = new Peer();
 
@@ -233,14 +248,14 @@
           connDot.className = 'status-dot connected';
           connText.textContent = 'Connected to PC';
           btnScanQr.style.display = 'none';
-          recordBtn.disabled = false;
+          setRecordButtonDisabled(false);
         });
 
         peerConn.on('close', () => {
           connDot.className = 'status-dot disconnected';
           connText.textContent = 'Disconnected from PC';
           btnScanQr.style.display = 'inline-flex';
-          recordBtn.disabled = true;
+          setRecordButtonDisabled(true);
         });
 
         peerConn.on('error', (err) => {
@@ -248,7 +263,7 @@
           connDot.className = 'status-dot disconnected';
           connText.textContent = 'Connection error';
           btnScanQr.style.display = 'inline-flex';
-          recordBtn.disabled = true;
+          setRecordButtonDisabled(true);
         });
       });
 
@@ -256,7 +271,7 @@
         console.error('PeerJS error:', err);
         connDot.className = 'status-dot disconnected';
         btnScanQr.style.display = 'inline-flex';
-        recordBtn.disabled = true;
+        setRecordButtonDisabled(true);
         if (err.type === 'peer-unavailable') {
           connText.textContent = 'PC offline. Reload PC dashboard and scan new QR.';
         } else if (err.type === 'network') {
@@ -343,7 +358,7 @@
     if (targetVersion && targetVersion !== APP_VERSION) {
       connDot.className = 'status-dot disconnected';
       connText.innerHTML = `Cached mobile app detected (${APP_VERSION}).<br><a href="#" onclick="window.location.reload(true); return false;" style="text-decoration:underline;color:var(--color-primary);font-weight:bold;display:inline-block;margin-top:4px;">Tap here to Force Reload</a>`;
-      recordBtn.disabled = true;
+      setRecordButtonDisabled(true);
     } else if (!pcPeerId) {
       connDot.className = 'status-dot disconnected';
       connText.textContent = 'No peer ID found. Scan QR to connect.';
@@ -396,6 +411,9 @@
     }
 
     async function initCamera() {
+      if (isInitializingCamera) return;
+      isInitializingCamera = true;
+
       // 1. Release previous stream and wait for hardware to cool down (essential for iOS camera cycling)
       if (mediaStream) {
         mediaStream.getTracks().forEach(t => t.stop());
@@ -412,8 +430,7 @@
           audio: true,
           video: {
             width: { ideal: 1280 },
-            height: { ideal: 720 },
-            zoom: true // Enable zoom capability discovery on Android Chrome
+            height: { ideal: 720 }
           }
         };
 
@@ -446,8 +463,8 @@
         const settings = activeTrack ? activeTrack.getSettings() : {};
         const label = (activeTrack && activeTrack.label) ? activeTrack.label.toLowerCase() : '';
         
-        const isFront = label.includes('front') || label.includes('user') || settings.facingMode === 'user';
-        viewfinder.classList.toggle('mirrored', isFront);
+        // Flipped camera matches physical orientation when unmirrored. Flipped preview was requested to be removed.
+        viewfinder.classList.remove('mirrored');
 
         if (videoDevices.length === 0) {
           await enumerateCameras();
@@ -471,6 +488,8 @@
         recStatus.textContent = 'camera blocked';
         recStatus.className = 'badge badge-error';
         flipBtn.disabled = false;
+      } finally {
+        isInitializingCamera = false;
       }
     }
 
@@ -498,7 +517,7 @@
       if (!peerConn || !peerConn.open) {
         connDot.className = 'status-dot disconnected';
         connText.textContent = 'Not connected to PC';
-        recordBtn.disabled = true;
+        setRecordButtonDisabled(true);
         return;
       }
       chunks = [];
@@ -521,7 +540,7 @@
       mediaRecorder.onstop = () => {
         recStatus.textContent = 'stopped';
         recStatus.className = 'badge badge-idle';
-        uploadBtn.style.display = 'flex';
+        uploadBtn.style.display = 'inline-flex';
       };
 
       mediaRecorder.start(250);
@@ -531,9 +550,11 @@
       recStatus.textContent = 'rec';
       recStatus.className = 'badge badge-error';
 
-      // Enable dedicated pause button
+      // Enable dedicated pause button in right slot
       pauseBtn.disabled = false;
       pauseBtn.innerHTML = '<i class="ti ti-player-pause"></i>';
+      pauseBtn.style.display = 'inline-flex';
+      uploadBtn.style.display = 'none';
 
       seconds = 0;
       recTimer.textContent = '00:00';
@@ -556,8 +577,10 @@
       isPaused = false;
       document.querySelector('.mobile-container').classList.remove('recording');
       
-      // Disable dedicated pause button
+      // Hide pause, show upload button in right slot
       pauseBtn.disabled = true;
+      pauseBtn.style.display = 'none';
+      uploadBtn.style.display = 'inline-flex';
       
       clearInterval(timerInterval);
       recTimer.style.display = 'none';
@@ -574,7 +597,7 @@
 
       uploadBtn.style.display = 'none';
       uploadOverlay.style.display = 'block';
-      recordBtn.disabled = true;
+      setRecordButtonDisabled(true);
       flipBtn.disabled = true;
 
       // Send metadata first
@@ -607,9 +630,15 @@
       successOverlay.style.display = 'block';
       recStatus.textContent = 'sent';
       recStatus.className = 'badge badge-upload';
-      recordBtn.disabled = false;
+      setRecordButtonDisabled(false);
       flipBtn.disabled = false;
       chunks = [];
+
+      // Reset right slot controls
+      pauseBtn.disabled = true;
+      pauseBtn.innerHTML = '<i class="ti ti-player-pause"></i>';
+      pauseBtn.style.display = 'inline-flex';
+      uploadBtn.style.display = 'none';
     });
 
     // ── New recording / Close ─────────────────────────────────────
@@ -621,6 +650,8 @@
       uploadPct.textContent = '0%';
       pauseBtn.disabled = true;
       pauseBtn.innerHTML = '<i class="ti ti-player-pause"></i>';
+      pauseBtn.style.display = 'inline-flex';
+      uploadBtn.style.display = 'none';
     }
 
     // ── Pause / Resume Event ──────────────────────────────────────
