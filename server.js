@@ -1116,7 +1116,7 @@ server.on('listening', () => {
     }
   }
 
-  if (process.env.RUNNING_AS_CLI === 'true') {
+  if (process.env.RUNNING_AS_CLI === 'true' && process.env.RUNNING_IN_ELECTRON !== 'true') {
     setupExitHandlers();
     startHeadlessBrowser(boundPort);
     initCliMode(boundPort);
