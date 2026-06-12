@@ -215,6 +215,7 @@
         peerStatusText.textContent = `${connectedPeers.size} phone(s)`;
         updateDeviceList();
         showToast('Phone connected');
+        sendPeersCountToServer(connectedPeers.size);
       });
 
       conn.on('data', (data) => {
@@ -225,12 +226,14 @@
         connectedPeers.delete(peerId);
         peerStatusText.textContent = connectedPeers.size ? `${connectedPeers.size} phone(s)` : 'Waiting for phone';
         updateDeviceList();
+        sendPeersCountToServer(connectedPeers.size);
       });
 
       conn.on('error', (err) => {
         console.error('Data connection error:', err);
         connectedPeers.delete(peerId);
         updateDeviceList();
+        sendPeersCountToServer(connectedPeers.size);
       });
     }
 
@@ -774,6 +777,32 @@
         console.warn('Failed to check for updates:', err);
       }
     }
+
+    async function sendPeersCountToServer(count) {
+      try {
+        await fetch('/api/peers-count', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ count })
+        });
+      } catch (e) {
+        // Ignore
+      }
+    }
+
+    window.addEventListener('beforeunload', () => {
+      const payload = JSON.stringify({ count: 0 });
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon('/api/peers-count', payload);
+      } else {
+        fetch('/api/peers-count', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: payload,
+          keepalive: true
+        }).catch(() => {});
+      }
+    });
 
     // ── Init ──────────────────────────────────────────────────────
     loadFiles();

@@ -50,6 +50,7 @@ app.use(express.static(publicDir));
 
 // ── SSE (Server-Sent Events) ────────────────────────────────────────
 let sseClients = [];
+let connectedPeersCount = 0;
 
 app.get('/events', (req, res) => {
   res.writeHead(200, {
@@ -60,9 +61,26 @@ app.get('/events', (req, res) => {
   });
   res.write('data: {"type":"connected"}\n\n');
   sseClients.push(res);
+  if (typeof tuiTriggerRedraw === 'function') {
+    tuiTriggerRedraw();
+  }
   req.on('close', () => {
     sseClients = sseClients.filter(c => c !== res);
+    if (sseClients.length === 0) {
+      connectedPeersCount = 0;
+    }
+    if (typeof tuiTriggerRedraw === 'function') {
+      tuiTriggerRedraw();
+    }
   });
+});
+
+app.post('/api/peers-count', (req, res) => {
+  connectedPeersCount = parseInt(req.body.count, 10) || 0;
+  if (typeof tuiTriggerRedraw === 'function') {
+    tuiTriggerRedraw();
+  }
+  res.json({ success: true });
 });
 
 function broadcast(type, data) {
@@ -302,6 +320,7 @@ function initCliMode(boundPort) {
   let calendarCursorDate = new Date();
   let showQrOverlay = false;
   let tuiSearchQuery = '';
+  let isPromptActive = false;
 
   function getFriendlySize(bytes) {
     if (!bytes) return '0 B';
@@ -495,8 +514,17 @@ function initCliMode(boundPort) {
     const cols = process.stdout.columns || 80;
     const screenRows = [];
     
-    // Header
-    screenRows.push(`  \x1b[1m\x1b[36mrec.relay\x1b[0m v${APP_VERSION}  ──  Record on mobile, land on PC  ` + '─'.repeat(Math.max(0, cols - 50)));
+    // Connection status badge for header
+    let statusBadge = '\x1b[31m[Offline]\x1b[0m';
+    if (sseClients.length > 0) {
+      statusBadge = connectedPeersCount > 0
+        ? `\x1b[32m[${connectedPeersCount} Connected]\x1b[0m`
+        : '\x1b[33m[Waiting for phone]\x1b[0m';
+    }
+
+    const headerText = `  \x1b[1m\x1b[36mrec.relay\x1b[0m v${APP_VERSION}  ──  Record on mobile, land on PC  `;
+    const rightPad = Math.max(0, cols - getVisualLength(statusBadge) - 2);
+    screenRows.push(padVisualEnd(headerText, rightPad) + statusBadge);
     screenRows.push('');
     
     const allFiles = readFilesFromDisk();
@@ -653,6 +681,7 @@ function initCliMode(boundPort) {
   }
 
   function promptSearch() {
+    isPromptActive = true;
     if (process.stdin.isTTY) {
       process.stdin.setRawMode(false);
     }
@@ -676,6 +705,7 @@ function initCliMode(boundPort) {
         tuiSearchQuery = query;
       }
       selectedListIndex = 0;
+      isPromptActive = false;
       drawScreen();
     });
   }
@@ -697,6 +727,7 @@ function initCliMode(boundPort) {
     const selFile = filteredFiles[selectedListIndex];
     if (!selFile) return;
     
+    isPromptActive = true;
     if (process.stdin.isTTY) {
       process.stdin.setRawMode(false);
     }
@@ -717,6 +748,7 @@ function initCliMode(boundPort) {
         deleteFileLocally(selFile.filename);
         selectedListIndex = 0;
       }
+      isPromptActive = false;
       drawScreen();
     });
   }
@@ -738,6 +770,7 @@ function initCliMode(boundPort) {
     const selFile = filteredFiles[selectedListIndex];
     if (!selFile) return;
     
+    isPromptActive = true;
     if (process.stdin.isTTY) {
       process.stdin.setRawMode(false);
     }
@@ -769,6 +802,7 @@ function initCliMode(boundPort) {
           }
           
           saveMetadataLocally(selFile.filename, finalComment, finalTags, finalMusicLink);
+          isPromptActive = false;
           drawScreen();
         });
       });
@@ -776,6 +810,7 @@ function initCliMode(boundPort) {
   }
 
   process.stdin.on('keypress', (str, key) => {
+    if (isPromptActive) return;
     if (!key) return;
     
     if (key.ctrl && key.name === 'c') {
