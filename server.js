@@ -11,7 +11,7 @@ import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const APP_VERSION = '3.4.1';
+const APP_VERSION = '3.4.2';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -1036,7 +1036,7 @@ function startHeadlessBrowser(port) {
     '--disable-backgrounding-occluded-windows',
     '--disable-ipc-flooding-protection',
     '--no-sandbox',
-    `http://localhost:${port}/cli-receiver.html`
+    `http://127.0.0.1:${port}/cli-receiver.html`
   ];
 
   try {
@@ -1101,6 +1101,8 @@ app.use((err, _req, res, _next) => {
 const server = http.createServer(app);
 
 let currentTryPort = PORT;
+let portRetryCount = 0;
+const MAX_PORT_RETRIES = 3;
 
 function startServer(port) {
   currentTryPort = port;
@@ -1109,6 +1111,7 @@ function startServer(port) {
 
 server.on('listening', () => {
   const boundPort = server.address().port;
+  portRetryCount = 0; // reset retry count on successful bind
   const ifaces = os.networkInterfaces();
   const ips = [];
   for (const name in ifaces) {
@@ -1128,11 +1131,11 @@ server.on('listening', () => {
   console.log('  rec.relay');
   console.log('  record on mobile, land on PC');
   console.log('  ─────────────────────────────');
-  console.log(`  Dashboard:  http://localhost:${boundPort}/dashboard`);
+  console.log(`  Dashboard:  http://127.0.0.1:${boundPort}/dashboard`);
   if (ips.length) {
     console.log(`  LAN IP:     ${ips[0]}`);
 
-    QRCode.toString(`http://localhost:${boundPort}/dashboard`, { type: 'terminal', small: true }, (err, qr) => {
+    QRCode.toString(`http://127.0.0.1:${boundPort}/dashboard`, { type: 'terminal', small: true }, (err, qr) => {
       if (!err) { console.log(''); console.log(qr); }
       console.log('');
     });
@@ -1141,15 +1144,24 @@ server.on('listening', () => {
   }
 
   if (!process.env.RUNNING_IN_ELECTRON) {
-    openBrowser(`http://localhost:${boundPort}/dashboard`);
+    openBrowser(`http://127.0.0.1:${boundPort}/dashboard`);
   }
 });
 
 server.on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
-    const nextPort = parseInt(currentTryPort, 10) + 1;
-    console.log(`Port ${currentTryPort} is busy. Trying port ${nextPort}...`);
-    startServer(nextPort);
+    if (portRetryCount < MAX_PORT_RETRIES) {
+      portRetryCount++;
+      console.log(`Port ${currentTryPort} is busy. Retrying in 500ms (attempt ${portRetryCount}/${MAX_PORT_RETRIES})...`);
+      setTimeout(() => {
+        startServer(currentTryPort);
+      }, 500);
+    } else {
+      portRetryCount = 0;
+      const nextPort = parseInt(currentTryPort, 10) + 1;
+      console.log(`Port ${currentTryPort} is still busy after ${MAX_PORT_RETRIES} attempts. Trying port ${nextPort}...`);
+      startServer(nextPort);
+    }
   } else {
     console.error('Server error:', err);
   }
