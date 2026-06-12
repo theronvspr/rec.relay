@@ -783,7 +783,7 @@
         await fetch('/api/peers-count', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ count })
+          body: JSON.stringify({ count, peerId: myPeerId })
         });
       } catch (e) {
         // Ignore

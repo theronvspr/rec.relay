@@ -51,6 +51,7 @@ app.use(express.static(publicDir));
 // ── SSE (Server-Sent Events) ────────────────────────────────────────
 let sseClients = [];
 let connectedPeersCount = 0;
+let dashboardPeerId = '';
 
 app.get('/events', (req, res) => {
   res.writeHead(200, {
@@ -68,6 +69,7 @@ app.get('/events', (req, res) => {
     sseClients = sseClients.filter(c => c !== res);
     if (sseClients.length === 0) {
       connectedPeersCount = 0;
+      dashboardPeerId = '';
     }
     if (typeof tuiTriggerRedraw === 'function') {
       tuiTriggerRedraw();
@@ -77,6 +79,9 @@ app.get('/events', (req, res) => {
 
 app.post('/api/peers-count', (req, res) => {
   connectedPeersCount = parseInt(req.body.count, 10) || 0;
+  if (req.body.peerId) {
+    dashboardPeerId = req.body.peerId;
+  }
   if (typeof tuiTriggerRedraw === 'function') {
     tuiTriggerRedraw();
   }
@@ -458,8 +463,6 @@ function initCliMode(boundPort) {
     return lines;
   }
 
-  // Pre-generate QR code representation
-  let cachedQrString = '';
   const ips = [];
   const ifaces = os.networkInterfaces();
   for (const name in ifaces) {
@@ -468,26 +471,28 @@ function initCliMode(boundPort) {
     }
   }
   const ipStr = ips.length ? ips[0] : '127.0.0.1';
-  const mobileUrl = `http://${ipStr}:${boundPort}/`;
-
-  QRCode.toString(mobileUrl, { type: 'terminal', small: true }, (err, qr) => {
-    if (!err) {
-      cachedQrString = qr;
-    }
-  });
 
   function drawQrScreen() {
+    const GITHUB_PAGES_BASE = 'https://theronvspr.github.io/rec.relay';
+    let targetUrl = GITHUB_PAGES_BASE;
+    if (dashboardPeerId) {
+      targetUrl = `${GITHUB_PAGES_BASE}/?peerId=${dashboardPeerId}&v=${APP_VERSION}`;
+    }
+
     process.stdout.write('\x1b[2J\x1b[H');
     console.log('\n  ┌──────────────────────────────────────────────────────────┐');
     console.log('  │                  CONNECT YOUR MOBILE PHONE               │');
     console.log('  └──────────────────────────────────────────────────────────┘\n');
-    if (cachedQrString) {
-      console.log(cachedQrString);
-    } else {
-      console.log('  Generating QR Code...');
-    }
-    console.log(`\n  URL: \x1b[36m${mobileUrl}\x1b[0m`);
-    console.log('\n  Press \x1b[32m[c]\x1b[0m to close this connection window and return to dashboard.');
+
+    QRCode.toString(targetUrl, { type: 'terminal', small: true }, (err, qr) => {
+      if (!err) {
+        console.log(qr);
+      } else {
+        console.log('  Generating QR Code...');
+      }
+      console.log(`\n  URL: \x1b[36m${targetUrl}\x1b[0m`);
+      console.log('\n  Press \x1b[32m[c]\x1b[0m to close this connection window and return to dashboard.');
+    });
   }
 
   function getVisualLength(str) {
