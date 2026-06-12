@@ -107,7 +107,7 @@
       <div class="qr-image">
         <img id="qr-img" alt="QR Code">
       </div>
-      <p id="qr-url" style="font-family: var(--font-mono); font-size: 11px; color: var(--color-primary); margin: var(--space-3) 0; word-break: break-all;"></p>
+      <a id="qr-url" target="_blank" style="display: block; font-family: var(--font-mono); font-size: 11px; color: var(--color-primary); margin: var(--space-3) 0; word-break: break-all; text-decoration: underline; cursor: pointer;"></a>
       <button id="btn-close-qr" class="btn btn-ghost" style="width: 100%;">Close</button>
     </div>
   </div>
@@ -267,6 +267,7 @@
       const mobileUrl = `${recorderBase}/?peerId=${myPeerId}`;
 
       qrUrl.textContent = mobileUrl;
+      qrUrl.href = mobileUrl;
 
       try {
         const res = await fetch(`/api/qrcode?url=${encodeURIComponent(mobileUrl)}`);

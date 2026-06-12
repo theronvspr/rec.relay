@@ -19,9 +19,14 @@
     </div>
 
     <!-- Connection status -->
-    <div id="connection-banner" class="card" style="margin-bottom: var(--space-4); text-align: center; padding: var(--space-3);">
-      <span class="status-dot waiting"></span>
-      <span id="connection-text" style="font-size: 13px; color: var(--ink-secondary);">Connecting to PC...</span>
+    <div id="connection-banner" class="card" style="margin-bottom: var(--space-4); text-align: center; padding: var(--space-3); display: flex; flex-direction: column; align-items: center; gap: var(--space-2);">
+      <div style="display: flex; align-items: center; justify-content: center; gap: var(--space-2);">
+        <span class="status-dot waiting"></span>
+        <span id="connection-text" style="font-size: 13px; color: var(--ink-secondary);">Connecting to PC...</span>
+      </div>
+      <button id="btn-scan-qr" class="btn btn-secondary btn-small" style="display: none; margin-top: 4px;">
+        <i class="ti ti-camera"></i> Scan PC QR Code
+      </button>
     </div>
 
     <!-- Viewfinder -->
@@ -77,8 +82,27 @@
 
   </div>
 
-  <!-- PeerJS -->
+  <!-- QR Scanner Modal -->
+  <div id="scanner-modal" class="qr-modal">
+    <div class="qr-modal-content">
+      <h2 style="font-size: 16px; margin-bottom: var(--space-3); font-weight: 500;">Scan PC QR Code</h2>
+      <p style="font-size: 11px; color: var(--ink-secondary); margin-bottom: var(--space-4);">Position the PC dashboard QR code inside the viewfinder</p>
+      
+      <div id="scanner-container" style="position: relative; width: 100%; aspect-ratio: 1; background: #000; border-radius: var(--radius-md); overflow: hidden; margin-bottom: var(--space-4);">
+        <video id="scanner-video" autoplay playsinline style="width: 100%; height: 100%; object-fit: cover;"></video>
+        <!-- Scanner guide box overlay -->
+        <div style="position: absolute; inset: 0; border: 4px solid rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; pointer-events: none;">
+          <div style="width: 70%; height: 70%; border: 2px solid var(--color-primary); box-shadow: 0 0 0 9999px rgba(0,0,0,0.3); border-radius: var(--radius-md);"></div>
+        </div>
+      </div>
+
+      <button id="btn-close-scanner" class="btn btn-ghost" style="width: 100%;">Cancel</button>
+    </div>
+  </div>
+
+  <!-- PeerJS & jsQR -->
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
 
   <script>
     // ── Elements ──────────────────────────────────────────────────
@@ -98,6 +122,12 @@
     const connText       = document.getElementById('connection-text');
     const connDot        = connBanner.querySelector('.status-dot');
 
+    // Scanner Elements
+    const scannerModal   = document.getElementById('scanner-modal');
+    const scannerVideo   = document.getElementById('scanner-video');
+    const btnScanQr      = document.getElementById('btn-scan-qr');
+    const btnCloseScanner = document.getElementById('btn-close-scanner');
+
     // ── State ─────────────────────────────────────────────────────
     let mediaStream   = null;
     let mediaRecorder = null;
@@ -109,27 +139,39 @@
     let peerConn      = null; // WebRTC data connection to PC
 
     // ── WebRTC: connect to PC peer ────────────────────────────────
-    const params = new URLSearchParams(window.location.search);
-    const pcPeerId = params.get('peerId');
+    let peer = null;
 
-    if (!pcPeerId) {
-      connDot.className = 'status-dot disconnected';
-      connText.textContent = 'No peer ID found. Scan the QR code from the PC dashboard.';
-    } else {
-      const peer = new Peer();
+    function connectToPC(targetPeerId) {
+      if (peerConn) {
+        try { peerConn.close(); } catch(e){}
+        peerConn = null;
+      }
+      if (peer) {
+        try { peer.destroy(); } catch(e){}
+        peer = null;
+      }
+
+      connDot.className = 'status-dot waiting';
+      connText.textContent = 'Connecting to PC...';
+      btnScanQr.style.display = 'none';
+      recordBtn.disabled = true;
+
+      peer = new Peer();
 
       peer.on('open', () => {
-        peerConn = peer.connect(pcPeerId, { reliable: true });
+        peerConn = peer.connect(targetPeerId, { reliable: true });
 
         peerConn.on('open', () => {
           connDot.className = 'status-dot connected';
           connText.textContent = 'Connected to PC';
+          btnScanQr.style.display = 'none';
           recordBtn.disabled = false;
         });
 
         peerConn.on('close', () => {
           connDot.className = 'status-dot disconnected';
           connText.textContent = 'Disconnected from PC';
+          btnScanQr.style.display = 'inline-flex';
           recordBtn.disabled = true;
         });
 
@@ -137,6 +179,7 @@
           console.error('PeerJS connection error:', err);
           connDot.className = 'status-dot disconnected';
           connText.textContent = 'Connection error';
+          btnScanQr.style.display = 'inline-flex';
           recordBtn.disabled = true;
         });
       });
@@ -144,6 +187,7 @@
       peer.on('error', (err) => {
         console.error('PeerJS error:', err);
         connDot.className = 'status-dot disconnected';
+        btnScanQr.style.display = 'inline-flex';
         recordBtn.disabled = true;
         if (err.type === 'peer-unavailable') {
           connText.textContent = 'PC offline. Reload PC dashboard and scan new QR.';
@@ -153,6 +197,79 @@
           connText.textContent = `Error: ${err.type}`;
         }
       });
+    }
+
+    // ── QR Scanner logic ──────────────────────────────────────────
+    let scannerStream = null;
+    let scannerAnimationFrame = null;
+
+    async function startScanner() {
+      scannerModal.style.display = 'flex';
+      try {
+        scannerStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 640 } }
+        });
+        scannerVideo.srcObject = scannerStream;
+        
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+
+        function scanFrame() {
+          if (scannerVideo.readyState === scannerVideo.HAVE_ENOUGH_DATA) {
+            canvas.width = scannerVideo.videoWidth;
+            canvas.height = scannerVideo.videoHeight;
+            ctx.drawImage(scannerVideo, 0, 0, canvas.width, canvas.height);
+            
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const code = jsQR(imageData.data, imageData.width, imageData.height, {
+              inversionAttempts: "dontInvert",
+            });
+
+            if (code) {
+              const match = code.data.match(/[?&]peerId=([^&]+)/);
+              if (match) {
+                const scannedPeerId = match[1];
+                stopScanner();
+                const newUrl = window.location.protocol + "//" + window.location.host + window.location.pathname + '?peerId=' + scannedPeerId;
+                window.history.pushState({ path: newUrl }, '', newUrl);
+                connectToPC(scannedPeerId);
+                return;
+              }
+            }
+          }
+          scannerAnimationFrame = requestAnimationFrame(scanFrame);
+        }
+        
+        scannerAnimationFrame = requestAnimationFrame(scanFrame);
+      } catch (err) {
+        console.error('Scanner error:', err);
+        alert('Could not access camera for scanning: ' + err.message);
+        stopScanner();
+      }
+    }
+
+    function stopScanner() {
+      scannerModal.style.display = 'none';
+      if (scannerStream) {
+        scannerStream.getTracks().forEach(t => t.stop());
+        scannerStream = null;
+      }
+      if (scannerAnimationFrame) {
+        cancelAnimationFrame(scannerAnimationFrame);
+        scannerAnimationFrame = null;
+      }
+    }
+
+    // Initial connection run
+    const params = new URLSearchParams(window.location.search);
+    const pcPeerId = params.get('peerId');
+
+    if (!pcPeerId) {
+      connDot.className = 'status-dot disconnected';
+      connText.textContent = 'No peer ID found. Scan QR to connect.';
+      btnScanQr.style.display = 'inline-flex';
+    } else {
+      connectToPC(pcPeerId);
     }
 
     // ── Camera ────────────────────────────────────────────────────
@@ -301,6 +418,8 @@
 
     btnNew.addEventListener('click', resetRecorderState);
     btnCloseSuccess.addEventListener('click', resetRecorderState);
+    btnScanQr.addEventListener('click', startScanner);
+    btnCloseScanner.addEventListener('click', stopScanner);
 
     // ── Init ──────────────────────────────────────────────────────
     initCamera();
