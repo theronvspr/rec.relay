@@ -103,6 +103,17 @@ app.post('/api/peers-count', (req, res) => {
   res.json({ success: true });
 });
 
+app.post('/api/log', (req, res) => {
+  const { level, message } = req.body;
+  const logMsg = `[${new Date().toISOString()}] [Browser ${level.toUpperCase()}] ${message}\n`;
+  try {
+    fs.appendFileSync(path.join(uploadDir, 'headless-browser.log'), logMsg);
+  } catch (e) {
+    // Ignore
+  }
+  res.json({ success: true });
+});
+
 function broadcast(type, data) {
   const payload = JSON.stringify({ type, data });
   sseClients.forEach(c => c.write(`data: ${payload}\n\n`));
@@ -1019,11 +1030,20 @@ function startHeadlessBrowser(port) {
     '--no-default-browser-check',
     '--disable-extensions',
     '--disable-background-networking',
+    '--disable-background-timer-throttling',
+    '--disable-renderer-backgrounding',
+    '--disable-backgrounding-occluded-windows',
+    '--disable-ipc-flooding-protection',
+    '--no-sandbox',
     `http://localhost:${port}/cli-receiver.html`
   ];
 
   try {
-    headlessBrowserProcess = spawn(browserPath, args, { stdio: 'ignore', detached: false });
+    const logPath = path.join(uploadDir, 'headless-browser.log');
+    const logFd = fs.openSync(logPath, 'a');
+    fs.writeSync(logFd, `\n--- Headless Browser Session Start: ${new Date().toISOString()} ---\n`);
+
+    headlessBrowserProcess = spawn(browserPath, args, { stdio: ['ignore', logFd, logFd], detached: false });
     
     headlessBrowserProcess.on('error', (err) => {
       console.error('Headless browser failed to start:', err.message);
