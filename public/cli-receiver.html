@@ -14,9 +14,12 @@
     const originalLog = console.log;
     const originalError = console.error;
     async function remoteLog(level, args) {
-      const msg = Array.from(args).map(arg => 
-        typeof arg === 'object' ? JSON.stringify(arg) : String(arg)
-      ).join(' ');
+      const msg = Array.from(args).map(arg => {
+        if (arg instanceof Error) {
+          return arg.stack || arg.message || String(arg);
+        }
+        return typeof arg === 'object' ? JSON.stringify(arg) : String(arg);
+      }).join(' ');
       try {
         await fetch(`${LOCAL_BASE}/api/log`, {
           method: 'POST',
