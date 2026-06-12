@@ -1,4 +1,5 @@
 import express from 'express';
+import readline from 'readline';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
@@ -10,7 +11,7 @@ import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const APP_VERSION = '3.3.0';
+const APP_VERSION = '3.3.1';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -277,6 +278,157 @@ app.delete('/files/:filename', (req, res) => {
   });
 });
 
+// ── Interactive CLI Mode ─────────────────────────────────────────────
+let cliSearchQuery = '';
+
+function initCliMode(boundPort) {
+  readline.emitKeypressEvents(process.stdin);
+  if (process.stdin.isTTY) {
+    process.stdin.setRawMode(true);
+  }
+
+  function getFriendlySize(bytes) {
+    if (!bytes) return '0 B';
+    const u = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(1024));
+    return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${u[i]}`;
+  }
+
+  function printHotkeyBar() {
+    console.log('\n  Interactive Hotkeys:');
+    console.log('  \x1b[32m[l]\x1b[0m List recordings   \x1b[32m[f]\x1b[0m Filter/Search recordings');
+    console.log('  \x1b[32m[o]\x1b[0m Open dashboard     \x1b[32m[h]\x1b[0m Show help');
+    console.log('  \x1b[32m[q]\x1b[0m Quit server');
+    console.log('');
+  }
+
+  process.stdin.on('keypress', (str, key) => {
+    if (key.ctrl && key.name === 'c') {
+      process.exit();
+    }
+
+    if (key.name === 'l') {
+      listCliFiles();
+    } else if (key.name === 'f') {
+      promptCliFilter();
+    } else if (key.name === 'o') {
+      console.log('  Opening dashboard in browser...');
+      openBrowser(`http://localhost:${boundPort}/dashboard`);
+    } else if (key.name === 'h') {
+      printCliHelp();
+    } else if (key.name === 'q') {
+      console.log('  Shutting down rec.relay. Goodbye!');
+      process.exit();
+    }
+  });
+
+  function listCliFiles() {
+    fs.readdir(uploadDir, (err, files) => {
+      if (err) {
+        console.log('  \x1b[31mError reading uploads directory.\x1b[0m');
+        return;
+      }
+      const metadata = readMetadata();
+      let list = files
+        .filter(f => f.startsWith('recording-'))
+        .map(f => {
+          const s = fs.statSync(path.join(uploadDir, f));
+          const meta = metadata[f] || {};
+          return {
+            filename: f,
+            size: s.size,
+            createdAt: s.birthtime || s.mtime,
+            tags: meta.tags || [],
+            comment: meta.comment || '',
+            musicLink: meta.musicLink || ''
+          };
+        })
+        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+      if (cliSearchQuery) {
+        const query = cliSearchQuery.toLowerCase();
+        list = list.filter(f => {
+          const commentMatch = f.comment.toLowerCase().includes(query);
+          const tagMatch = f.tags.some(t => t.toLowerCase().includes(query));
+          return commentMatch || tagMatch;
+        });
+      }
+
+      console.log('\n  ───────────────────────────────────────');
+      if (cliSearchQuery) {
+        console.log(`  \x1b[36mRecordings matching: "${cliSearchQuery}"\x1b[0m`);
+      } else {
+        console.log('  \x1b[36mAll stored recordings:\x1b[0m');
+      }
+      console.log('  ───────────────────────────────────────');
+
+      if (list.length === 0) {
+        console.log('  (No recordings found)');
+      } else {
+        list.forEach((f, idx) => {
+          const dateStr = new Date(f.createdAt).toLocaleDateString();
+          const timeStr = new Date(f.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          console.log(`  ${idx + 1}. \x1b[33m${f.filename}\x1b[0m (${getFriendlySize(f.size)}) - ${dateStr} ${timeStr}`);
+          if (f.comment) {
+            console.log(`     \x1b[37m"${f.comment}"\x1b[0m`);
+          }
+          if (f.tags.length) {
+            console.log(`     Tags: ${f.tags.map(t => `#${t}`).join(', ')}`);
+          }
+          if (f.musicLink) {
+            console.log(`     Music: \x1b[34m${f.musicLink}\x1b[0m`);
+          }
+          console.log('');
+        });
+      }
+      printHotkeyBar();
+    });
+  }
+
+  function promptCliFilter() {
+    if (process.stdin.isTTY) {
+      process.stdin.setRawMode(false);
+    }
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout
+    });
+
+    rl.question('\n  Search term (tag or comment phrase, or press Enter for all): ', (answer) => {
+      rl.close();
+      if (process.stdin.isTTY) {
+        process.stdin.setRawMode(true);
+      }
+      
+      const query = answer.trim();
+      if (!query || query.toLowerCase() === 'all recordings') {
+        cliSearchQuery = '';
+        console.log('  \x1b[32mFilter cleared. Showing all recordings.\x1b[0m');
+      } else {
+        cliSearchQuery = query;
+        console.log(`  \x1b[32mFiltering by: "${cliSearchQuery}"\x1b[0m`);
+      }
+      listCliFiles();
+    });
+  }
+
+  function printCliHelp() {
+    console.log('\n  ───────────────────────────────────────');
+    console.log('  \x1b[36mKeyboard Actions Help:\x1b[0m');
+    console.log('  ───────────────────────────────────────');
+    console.log('  [l] - List all recordings stored in the uploads directory.');
+    console.log('  [f] - Enter a search phrase to filter files by comment text or tag.');
+    console.log('        (Type "All recordings" or leave blank to clear the filter).');
+    console.log('  [o] - Launch your default browser and open the dashboard page.');
+    console.log('  [h] - View this help documentation.');
+    console.log('  [q] - Quit and shut down the local server.');
+    console.log('  Ctrl+C - Force terminate the process immediately.');
+    printHotkeyBar();
+  }
+
+  printHotkeyBar();
+}
+
 // ── Auto-open browser ───────────────────────────────────────────────
 function openBrowser(url) {
   const cmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
@@ -314,11 +466,19 @@ server.on('listening', () => {
 
     QRCode.toString(`http://localhost:${boundPort}/dashboard`, { type: 'terminal', small: true }, (err, qr) => {
       if (!err) { console.log(''); console.log(qr); }
+      console.log('');
+      if (process.env.RUNNING_AS_CLI === 'true') {
+        initCliMode(boundPort);
+      }
     });
+  } else {
+    console.log('');
+    if (process.env.RUNNING_AS_CLI === 'true') {
+      initCliMode(boundPort);
+    }
   }
-  console.log('');
 
-  if (!process.env.RUNNING_IN_ELECTRON) {
+  if (!process.env.RUNNING_IN_ELECTRON && process.env.RUNNING_AS_CLI !== 'true') {
     openBrowser(`http://localhost:${boundPort}/dashboard`);
   }
 });
