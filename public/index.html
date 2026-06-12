@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>rec.relay</title>
   <meta name="description" content="Record on mobile, land on PC, over LAN.">
-  <link rel="stylesheet" href="styles.css?v=2.0.4">
+  <link rel="stylesheet" href="styles.css?v=2.0.5">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css">
 </head>
 <body>
@@ -72,28 +72,31 @@
 
     <!-- Controls -->
     <div class="controls-row">
-      <button id="btn-flip" class="circle-btn" title="Flip camera">
-        <i class="ti ti-refresh"></i>
-      </button>
+      <div class="control-slot left">
+        <button id="btn-flip" class="circle-btn" title="Flip camera">
+          <i class="ti ti-refresh"></i>
+        </button>
+        <button id="btn-pause" class="circle-btn" disabled title="Pause recording">
+          <i class="ti ti-player-pause"></i>
+        </button>
+      </div>
 
-      <button id="btn-pause" class="circle-btn" disabled title="Pause recording">
-        <i class="ti ti-player-pause"></i>
-      </button>
-
-      <div>
+      <div class="control-slot center">
         <button id="btn-record" class="record-btn" disabled>
           <div class="record-btn-inner"></div>
         </button>
       </div>
 
-      <button id="btn-upload" class="circle-btn" style="background: var(--color-upload-bg); border-color: var(--color-primary); color: var(--color-primary); display: none;" title="Send to PC">
-        <i class="ti ti-upload"></i>
-      </button>
+      <div class="control-slot right">
+        <button id="btn-upload" class="circle-btn" style="background: var(--color-upload-bg); border-color: var(--color-primary); color: var(--color-primary); display: none;" title="Send to PC">
+          <i class="ti ti-upload"></i>
+        </button>
+      </div>
     </div>
 
     <!-- Version footer -->
     <div style="text-align: center; margin-top: auto; padding: var(--space-4) 0 0 0; font-size: 10px; color: var(--ink-muted); font-family: var(--font-mono);">
-      v2.0.4
+      v2.0.5
     </div>
 
   </div>
@@ -127,7 +130,7 @@
 
   <script>
     // ── Version ───────────────────────────────────────────────────
-    const APP_VERSION = '2.0.4';
+    const APP_VERSION = '2.0.5';
 
     // ── Elements ──────────────────────────────────────────────────
     const viewfinder     = document.getElementById('viewfinder');
@@ -400,6 +403,10 @@
         await new Promise(r => setTimeout(r, 250));
       }
       
+      flipBtn.disabled = true; // Prevent click spamming during loading
+      recStatus.textContent = 'loading camera...';
+      recStatus.className = 'badge badge-idle';
+
       try {
         let constraints = {
           audio: true,
@@ -455,10 +462,15 @@
 
         setupZoom(activeTrack);
 
+        flipBtn.disabled = false;
+        recStatus.textContent = isRecording ? 'rec' : (isPaused ? 'paused' : 'ready');
+        recStatus.className = isRecording ? 'badge badge-error' : 'badge badge-idle';
+
       } catch (err) {
         console.error('Camera error:', err);
         recStatus.textContent = 'camera blocked';
         recStatus.className = 'badge badge-error';
+        flipBtn.disabled = false;
       }
     }
 
@@ -636,7 +648,26 @@
     btnCloseScanner.addEventListener('click', stopScanner);
 
     // ── Init ──────────────────────────────────────────────────────
-    initCamera();
+    window.addEventListener('load', () => {
+      setTimeout(initCamera, 100);
+    });
+
+    // ── Visibility Change: release camera/mic when page hidden ───
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') {
+        console.log('Page hidden. Stopping tracks to release camera/mic.');
+        if (isRecording) {
+          stopRecording();
+        }
+        if (mediaStream) {
+          mediaStream.getTracks().forEach(t => t.stop());
+          mediaStream = null;
+        }
+      } else if (document.visibilityState === 'visible') {
+        console.log('Page visible. Restarting camera.');
+        initCamera();
+      }
+    });
   </script>
 </body>
 </html>
