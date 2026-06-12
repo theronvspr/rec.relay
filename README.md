@@ -23,8 +23,8 @@ Starts the Express server, prints a QR code in your terminal, and opens the dash
 
 1. Go to the [GitHub Releases](https://github.com/theronvspr/rec.relay/releases) page.
 2. Download one of:
-   - **Portable**: `rec.relay 3.2.0.exe` — run directly, no setup.
-   - **Installer**: `rec.relay Setup 3.2.0.exe` — installs the app and adds desktop shortcuts.
+   - **Portable**: `rec.relay-Portable-3.2.0.exe` — run directly, no setup.
+   - **Installer**: `rec.relay-Setup-3.2.0.exe` — installs the app and adds desktop shortcuts.
 3. Open the app. The dashboard and QR code appear in a window.
 
 Videos are saved to:
