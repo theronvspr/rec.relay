@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>rec.relay</title>
   <meta name="description" content="Record on mobile, land on PC, over LAN.">
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=2.0.1">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css">
 </head>
 <body>
@@ -84,6 +84,11 @@
       </button>
     </div>
 
+    <!-- Version footer -->
+    <div style="text-align: center; margin-top: auto; padding: var(--space-4) 0 0 0; font-size: 10px; color: var(--ink-muted); font-family: var(--font-mono);">
+      v2.0.1
+    </div>
+
   </div>
 
   <!-- QR Scanner Modal -->
@@ -109,6 +114,9 @@
   <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
 
   <script>
+    // ── Version ───────────────────────────────────────────────────
+    const APP_VERSION = '2.0.1';
+
     // ── Elements ──────────────────────────────────────────────────
     const viewfinder     = document.getElementById('viewfinder');
     const recordBtn      = document.getElementById('btn-record');
@@ -276,8 +284,13 @@
     // Initial connection run
     const params = new URLSearchParams(window.location.search);
     const pcPeerId = params.get('peerId');
+    const targetVersion = params.get('v');
 
-    if (!pcPeerId) {
+    if (targetVersion && targetVersion !== APP_VERSION) {
+      connDot.className = 'status-dot disconnected';
+      connText.innerHTML = `Cached mobile app detected (${APP_VERSION}).<br><a href="#" onclick="window.location.reload(true); return false;" style="text-decoration:underline;color:var(--color-primary);font-weight:bold;display:inline-block;margin-top:4px;">Tap here to Force Reload</a>`;
+      recordBtn.disabled = true;
+    } else if (!pcPeerId) {
       connDot.className = 'status-dot disconnected';
       connText.textContent = 'No peer ID found. Scan QR to connect.';
       btnScanQr.style.display = 'inline-flex';

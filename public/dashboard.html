@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>rec.relay — dashboard</title>
   <meta name="description" content="rec.relay PC dashboard. Receive, manage, and stream recordings from your phone.">
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=2.0.1">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css">
 </head>
 <body>
@@ -80,6 +80,10 @@
           None
         </div>
       </div>
+      <!-- Version footer -->
+      <div style="text-align: center; margin-top: var(--space-4); font-size: 10px; color: var(--ink-muted); font-family: var(--font-mono);">
+        v2.0.1
+      </div>
     </div>
 
     <!-- Right column: File list -->
@@ -121,6 +125,9 @@
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 
   <script>
+    // ── Version ───────────────────────────────────────────────────
+    const APP_VERSION = '2.0.1';
+
     // ── Config ────────────────────────────────────────────────────
     // IMPORTANT: Set this to your GitHub Pages URL for production
     const GITHUB_PAGES_BASE = 'https://theronvspr.github.io/rec.relay';
@@ -266,7 +273,7 @@
 
       // Build the mobile recorder URL
       let recorderBase = GITHUB_PAGES_BASE || LOCAL_BASE;
-      const mobileUrl = `${recorderBase}/?peerId=${myPeerId}`;
+      const mobileUrl = `${recorderBase}/?peerId=${myPeerId}&v=${APP_VERSION}`;
 
       qrUrl.textContent = mobileUrl;
       qrUrl.href = mobileUrl;
