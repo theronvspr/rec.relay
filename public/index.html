@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>rec.relay</title>
   <meta name="description" content="Record on mobile, land on PC, over LAN.">
-  <link rel="stylesheet" href="styles.css?v=2.0.6">
+  <link rel="stylesheet" href="styles.css?v=2.0.7">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css">
 </head>
 <body>
@@ -98,7 +98,7 @@
 
     <!-- Version footer -->
     <div style="text-align: center; margin-top: auto; padding: var(--space-4) 0 0 0; font-size: 10px; color: var(--ink-muted); font-family: var(--font-mono);">
-      v2.0.6
+      v2.0.7
     </div>
 
   </div>
@@ -132,7 +132,7 @@
 
   <script>
     // ── Version ───────────────────────────────────────────────────
-    const APP_VERSION = '2.0.6';
+    const APP_VERSION = '2.0.7';
 
     // ── Elements ──────────────────────────────────────────────────
     const viewfinder     = document.getElementById('viewfinder');
@@ -176,6 +176,8 @@
     let videoDevices  = [];
     let currentDeviceIndex = 0;
     let isInitializingCamera = false;
+    let isFrontCamera = false;
+    let canvasAnimFrame = null;
 
     // ── Helpers ───────────────────────────────────────────────────
     function getFriendlyCameraName(label, index) {
@@ -287,6 +289,11 @@
     let scannerAnimationFrame = null;
 
     async function startScanner() {
+      // Release main camera first so scanner can access the hardware
+      if (mediaStream) {
+        mediaStream.getTracks().forEach(t => t.stop());
+        mediaStream = null;
+      }
       scannerModal.style.display = 'flex';
       try {
         try {
@@ -348,6 +355,7 @@
         cancelAnimationFrame(scannerAnimationFrame);
         scannerAnimationFrame = null;
       }
+      initCamera();
     }
 
     // Initial connection run
@@ -463,8 +471,10 @@
         const settings = activeTrack ? activeTrack.getSettings() : {};
         const label = (activeTrack && activeTrack.label) ? activeTrack.label.toLowerCase() : '';
         
-        // Flipped camera matches physical orientation when unmirrored. Flipped preview was requested to be removed.
-        viewfinder.classList.remove('mirrored');
+        isFrontCamera = (settings.facingMode === 'user') || label.includes('front') || (videoDevices.length <= 1 && facingMode === 'user');
+        
+        // Restore mirroring class to viewfinder preview if we are using the front camera
+        viewfinder.classList.toggle('mirrored', isFrontCamera);
 
         if (videoDevices.length === 0) {
           await enumerateCameras();
@@ -533,8 +543,53 @@
         }
       }
 
-      try { mediaRecorder = new MediaRecorder(mediaStream, opts); }
-      catch { mediaRecorder = new MediaRecorder(mediaStream); }
+      isRecording = true;
+      isPaused = false;
+
+      let recordingStream = mediaStream;
+      if (isFrontCamera) {
+        const width = viewfinder.videoWidth || 1280;
+        const height = viewfinder.videoHeight || 720;
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+
+        function drawCanvasFrame() {
+          if (!isRecording) return;
+          ctx.save();
+          ctx.translate(width, 0);
+          ctx.scale(-1, 1);
+          ctx.drawImage(viewfinder, 0, 0, width, height);
+          ctx.restore();
+          canvasAnimFrame = requestAnimationFrame(drawCanvasFrame);
+        }
+
+        canvasAnimFrame = requestAnimationFrame(drawCanvasFrame);
+
+        const canvasStream = canvas.captureStream(30);
+        const audioTracks = mediaStream.getAudioTracks();
+        if (audioTracks.length > 0) {
+          audioTracks.forEach(track => {
+            canvasStream.addTrack(track);
+          });
+        }
+        recordingStream = canvasStream;
+      }
+
+      try {
+        try { mediaRecorder = new MediaRecorder(recordingStream, opts); }
+        catch { mediaRecorder = new MediaRecorder(recordingStream); }
+      } catch (err) {
+        console.error('MediaRecorder initialization failed:', err);
+        showMobileToast('Error starting recording: ' + err.message);
+        isRecording = false;
+        if (canvasAnimFrame) {
+          cancelAnimationFrame(canvasAnimFrame);
+          canvasAnimFrame = null;
+        }
+        return;
+      }
 
       mediaRecorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
       mediaRecorder.onstop = () => {
@@ -544,8 +599,6 @@
       };
 
       mediaRecorder.start(250);
-      isRecording = true;
-      isPaused = false;
       document.querySelector('.mobile-container').classList.add('recording');
       recStatus.textContent = 'rec';
       recStatus.className = 'badge badge-error';
@@ -577,6 +630,11 @@
       isPaused = false;
       document.querySelector('.mobile-container').classList.remove('recording');
       
+      if (canvasAnimFrame) {
+        cancelAnimationFrame(canvasAnimFrame);
+        canvasAnimFrame = null;
+      }
+
       // Hide pause, show upload button in right slot
       pauseBtn.disabled = true;
       pauseBtn.style.display = 'none';
