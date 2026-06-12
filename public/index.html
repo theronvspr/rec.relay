@@ -48,7 +48,10 @@
         <div id="success-overlay" class="upload-overlay" style="display: none;">
           <p style="font-size: 18px; color: var(--color-primary); margin-bottom: var(--space-1);">&#10003;</p>
           <p style="font-size: 13px; color: var(--ink-primary); margin-bottom: var(--space-4);">Landed on PC</p>
-          <button id="btn-new" class="btn btn-secondary" style="width: 100%;">Record another</button>
+          <div style="display: flex; flex-direction: column; gap: var(--space-2);">
+            <button id="btn-new" class="btn btn-primary" style="width: 100%;">Record another</button>
+            <button id="btn-close-success" class="btn btn-secondary" style="width: 100%;">Close</button>
+          </div>
         </div>
 
         <div></div>
@@ -90,6 +93,7 @@
     const uploadPct      = document.getElementById('upload-pct');
     const successOverlay = document.getElementById('success-overlay');
     const btnNew         = document.getElementById('btn-new');
+    const btnCloseSuccess = document.getElementById('btn-close-success');
     const connBanner     = document.getElementById('connection-banner');
     const connText       = document.getElementById('connection-text');
     const connDot        = connBanner.querySelector('.status-dot');
@@ -133,13 +137,21 @@
           console.error('PeerJS connection error:', err);
           connDot.className = 'status-dot disconnected';
           connText.textContent = 'Connection error';
+          recordBtn.disabled = true;
         });
       });
 
       peer.on('error', (err) => {
         console.error('PeerJS error:', err);
         connDot.className = 'status-dot disconnected';
-        connText.textContent = 'Failed to connect';
+        recordBtn.disabled = true;
+        if (err.type === 'peer-unavailable') {
+          connText.textContent = 'PC offline. Reload PC dashboard and scan new QR.';
+        } else if (err.type === 'network') {
+          connText.textContent = 'Network error. Check Wi-Fi / connection.';
+        } else {
+          connText.textContent = `Error: ${err.type}`;
+        }
       });
     }
 
@@ -173,6 +185,12 @@
 
     function startRecording() {
       if (!mediaStream) return;
+      if (!peerConn || !peerConn.open) {
+        connDot.className = 'status-dot disconnected';
+        connText.textContent = 'Not connected to PC';
+        recordBtn.disabled = true;
+        return;
+      }
       chunks = [];
 
       let opts = { mimeType: 'video/webm;codecs=vp9,opus' };
@@ -272,14 +290,17 @@
       chunks = [];
     });
 
-    // ── New recording ─────────────────────────────────────────────
-    btnNew.addEventListener('click', () => {
+    // ── New recording / Close ─────────────────────────────────────
+    function resetRecorderState() {
       successOverlay.style.display = 'none';
       recStatus.textContent = 'ready';
       recStatus.className = 'badge badge-idle';
       uploadBar.style.width = '0%';
       uploadPct.textContent = '0%';
-    });
+    }
+
+    btnNew.addEventListener('click', resetRecorderState);
+    btnCloseSuccess.addEventListener('click', resetRecorderState);
 
     // ── Init ──────────────────────────────────────────────────────
     initCamera();
