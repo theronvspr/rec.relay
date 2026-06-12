@@ -212,9 +212,16 @@
     async function startScanner() {
       scannerModal.style.display = 'flex';
       try {
-        scannerStream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 640 } }
-        });
+        try {
+          scannerStream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 640 } }
+          });
+        } catch (e) {
+          console.warn("Environment camera failed, falling back to default camera:", e);
+          scannerStream = await navigator.mediaDevices.getUserMedia({
+            video: { width: { ideal: 640 }, height: { ideal: 640 } }
+          });
+        }
         scannerVideo.srcObject = scannerStream;
         
         const canvas = document.createElement('canvas');
