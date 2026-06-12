@@ -59,6 +59,27 @@
 /* ── Reset ────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+button {
+  -webkit-appearance: none !important;
+  appearance: none !important;
+  background-clip: padding-box !important;
+  outline: none !important;
+  border: none;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  -webkit-tap-highlight-color: transparent !important;
+}
+
+button:focus, button:active, button:focus-visible,
+.btn:focus, .btn:active, .btn:focus-visible,
+.record-btn:focus, .record-btn:active,
+.circle-btn:focus, .circle-btn:active {
+  outline: none !important;
+  box-shadow: none !important;
+  -webkit-tap-highlight-color: transparent !important;
+}
+
 body {
   font-family: var(--font-sans);
   font-size: 15px;
@@ -366,18 +387,19 @@ h3 { font-size: 15px; }
 .record-btn {
   width: 64px;
   height: 64px;
-  border-radius: 50%;
-  background: #fff;
-  border: 4px solid var(--color-border);
+  border-radius: 50% !important;
+  background: #fff !important;
+  border: 4px solid var(--color-border) !important;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   transition: border-color var(--duration-base) var(--ease-out-quart);
-  -webkit-appearance: none;
-  appearance: none;
-  overflow: hidden;
-  padding: 0;
+  -webkit-appearance: none !important;
+  appearance: none !important;
+  overflow: hidden !important;
+  padding: 0 !important;
+  background-clip: padding-box !important;
 }
 .record-btn-inner {
   width: 44px;
@@ -427,6 +449,7 @@ h3 { font-size: 15px; }
   cursor: not-allowed;
   -webkit-appearance: none !important;
   appearance: none !important;
+  background-clip: padding-box !important;
 }
 
 .circle-btn:hover { background: var(--color-surface-active); }
@@ -435,6 +458,7 @@ h3 { font-size: 15px; }
   cursor: not-allowed;
   -webkit-appearance: none !important;
   appearance: none !important;
+  background-clip: padding-box !important;
 }
 
 /* ── Upload overlay ──────────────────────────────────────────────── */

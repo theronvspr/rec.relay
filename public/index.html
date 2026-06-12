@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>rec.relay</title>
   <meta name="description" content="Record on mobile, land on PC, over LAN.">
-  <link rel="stylesheet" href="styles.css?v=2.0.2">
+  <link rel="stylesheet" href="styles.css?v=2.0.3">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css">
 </head>
 <body>
@@ -63,13 +63,20 @@
       </div>
     </div>
 
+    <!-- Zoom Control Slider -->
+    <div id="zoom-control-wrap" style="display: none; align-items: center; justify-content: center; gap: var(--space-2); margin: var(--space-3) 0; padding: 0 var(--space-4);">
+      <i class="ti ti-zoom-out" style="font-size: 14px; color: var(--ink-secondary);"></i>
+      <input type="range" id="zoom-slider" min="1" max="5" step="0.1" value="1" style="flex: 1; accent-color: var(--color-primary); cursor: pointer; height: 4px; border-radius: var(--radius-sm);">
+      <i class="ti ti-zoom-in" style="font-size: 14px; color: var(--ink-secondary);"></i>
+    </div>
+
     <!-- Controls -->
     <div class="controls-row">
       <button id="btn-flip" class="circle-btn" title="Flip camera">
         <i class="ti ti-refresh"></i>
       </button>
 
-      <button id="btn-pause" class="circle-btn" style="display: none;" title="Pause recording">
+      <button id="btn-pause" class="circle-btn" disabled title="Pause recording">
         <i class="ti ti-pause"></i>
       </button>
 
@@ -86,7 +93,7 @@
 
     <!-- Version footer -->
     <div style="text-align: center; margin-top: auto; padding: var(--space-4) 0 0 0; font-size: 10px; color: var(--ink-muted); font-family: var(--font-mono);">
-      v2.0.2
+      v2.0.3
     </div>
 
   </div>
@@ -109,13 +116,18 @@
     </div>
   </div>
 
+  <!-- Toast -->
+  <div id="toast" class="toast">
+    <span id="toast-msg"></span>
+  </div>
+
   <!-- PeerJS & jsQR -->
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
 
   <script>
     // ── Version ───────────────────────────────────────────────────
-    const APP_VERSION = '2.0.2';
+    const APP_VERSION = '2.0.3';
 
     // ── Elements ──────────────────────────────────────────────────
     const viewfinder     = document.getElementById('viewfinder');
@@ -135,6 +147,11 @@
     const connText       = document.getElementById('connection-text');
     const connDot        = connBanner.querySelector('.status-dot');
 
+    const zoomControlWrap = document.getElementById('zoom-control-wrap');
+    const zoomSlider      = document.getElementById('zoom-slider');
+    const toast           = document.getElementById('toast');
+    const toastMsg        = document.getElementById('toast-msg');
+
     // Scanner Elements
     const scannerModal   = document.getElementById('scanner-modal');
     const scannerVideo   = document.getElementById('scanner-video');
@@ -151,6 +168,33 @@
     let timerInterval = null;
     let seconds       = 0;
     let peerConn      = null; // WebRTC data connection to PC
+    let videoDevices  = [];
+    let currentDeviceIndex = 0;
+
+    // ── Helpers ───────────────────────────────────────────────────
+    function getFriendlyCameraName(label, index) {
+      if (!label) return `Camera ${index + 1}`;
+      let name = label;
+      if (label.toLowerCase().includes('front')) {
+        name = 'Front Camera';
+      } else if (label.toLowerCase().includes('back') || label.toLowerCase().includes('rear')) {
+        if (label.toLowerCase().includes('wide')) {
+          name = 'Back Camera (Ultra Wide)';
+        } else if (label.toLowerCase().includes('telephoto')) {
+          name = 'Back Camera (Telephoto)';
+        } else {
+          name = 'Back Camera';
+        }
+      }
+      return name;
+    }
+
+    function showMobileToast(msg) {
+      if (!toastMsg || !toast) return;
+      toastMsg.textContent = msg;
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 3000);
+    }
 
     // ── WebRTC: connect to PC peer ────────────────────────────────
     let peer = null;
@@ -299,15 +343,89 @@
     }
 
     // ── Camera ────────────────────────────────────────────────────
+    async function enumerateCameras() {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        videoDevices = devices.filter(device => device.kind === 'videoinput');
+        console.log('Available video devices:', videoDevices);
+      } catch (err) {
+        console.error('Error enumerating devices:', err);
+      }
+    }
+
+    function setupZoom(track) {
+      if (!track) {
+        zoomControlWrap.style.display = 'none';
+        return;
+      }
+      
+      const capabilities = typeof track.getCapabilities === 'function' ? track.getCapabilities() : {};
+      
+      if (capabilities.zoom) {
+        zoomControlWrap.style.display = 'flex';
+        zoomSlider.min = capabilities.zoom.min || 1;
+        zoomSlider.max = capabilities.zoom.max || 5;
+        zoomSlider.step = capabilities.zoom.step || 0.1;
+        
+        const settings = track.getSettings();
+        zoomSlider.value = settings.zoom || capabilities.zoom.min || 1;
+        
+        zoomSlider.oninput = async (e) => {
+          const val = parseFloat(e.target.value);
+          try {
+            await track.applyConstraints({
+              advanced: [{ zoom: val }]
+            });
+          } catch (err) {
+            console.error('Error applying zoom constraint:', err);
+          }
+        };
+      } else {
+        zoomControlWrap.style.display = 'none';
+      }
+    }
+
     async function initCamera() {
       if (mediaStream) mediaStream.getTracks().forEach(t => t.stop());
       try {
-        mediaStream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode, width: { ideal: 1280 }, height: { ideal: 720 } },
-          audio: true
-        });
+        let constraints = {
+          audio: true,
+          video: {
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          }
+        };
+
+        if (videoDevices.length > 0) {
+          const selectedDevice = videoDevices[currentDeviceIndex];
+          constraints.video.deviceId = { exact: selectedDevice.deviceId };
+        } else {
+          constraints.video.facingMode = facingMode;
+        }
+
+        mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
         viewfinder.srcObject = mediaStream;
-        viewfinder.classList.toggle('mirrored', facingMode === 'user');
+
+        const activeTrack = mediaStream.getVideoTracks()[0];
+        const settings = activeTrack ? activeTrack.getSettings() : {};
+        const label = (activeTrack && activeTrack.label) ? activeTrack.label.toLowerCase() : '';
+        
+        const isFront = label.includes('front') || label.includes('user') || settings.facingMode === 'user';
+        viewfinder.classList.toggle('mirrored', isFront);
+
+        if (videoDevices.length === 0) {
+          await enumerateCameras();
+          if (activeTrack && videoDevices.length > 0) {
+            const activeDeviceId = settings.deviceId;
+            const index = videoDevices.findIndex(d => d.deviceId === activeDeviceId);
+            if (index !== -1) {
+              currentDeviceIndex = index;
+            }
+          }
+        }
+
+        setupZoom(activeTrack);
+
       } catch (err) {
         console.error('Camera error:', err);
         recStatus.textContent = 'camera blocked';
@@ -315,10 +433,18 @@
       }
     }
 
-    flipBtn.addEventListener('click', () => {
+    flipBtn.addEventListener('click', async () => {
       if (isRecording) return;
-      facingMode = facingMode === 'user' ? 'environment' : 'user';
-      initCamera();
+      if (videoDevices.length > 1) {
+        currentDeviceIndex = (currentDeviceIndex + 1) % videoDevices.length;
+        const device = videoDevices[currentDeviceIndex];
+        const friendlyName = getFriendlyCameraName(device.label, currentDeviceIndex);
+        showMobileToast(`Switched to: ${friendlyName}`);
+      } else {
+        facingMode = facingMode === 'user' ? 'environment' : 'user';
+        showMobileToast(`Switched camera mode`);
+      }
+      await initCamera();
     });
 
     // ── Recording ─────────────────────────────────────────────────
@@ -364,9 +490,8 @@
       recStatus.textContent = 'rec';
       recStatus.className = 'badge badge-error';
 
-      // Controls swap: show pause, hide flip
-      flipBtn.style.display = 'none';
-      pauseBtn.style.display = 'flex';
+      // Enable dedicated pause button
+      pauseBtn.disabled = false;
       pauseBtn.innerHTML = '<i class="ti ti-pause"></i>';
 
       seconds = 0;
@@ -390,9 +515,8 @@
       isPaused = false;
       document.querySelector('.mobile-container').classList.remove('recording');
       
-      // Controls swap: show flip, hide pause
-      flipBtn.style.display = 'flex';
-      pauseBtn.style.display = 'none';
+      // Disable dedicated pause button
+      pauseBtn.disabled = true;
       
       clearInterval(timerInterval);
       recTimer.style.display = 'none';
@@ -454,6 +578,8 @@
       recStatus.className = 'badge badge-idle';
       uploadBar.style.width = '0%';
       uploadPct.textContent = '0%';
+      pauseBtn.disabled = true;
+      pauseBtn.innerHTML = '<i class="ti ti-pause"></i>';
     }
 
     // ── Pause / Resume Event ──────────────────────────────────────
