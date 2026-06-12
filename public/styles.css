@@ -420,8 +420,22 @@ h3 { font-size: 15px; }
   appearance: none;
   padding: 0;
 }
+.record-btn:disabled {
+  background: #fff !important;
+  border-color: var(--color-border) !important;
+  opacity: 0.4 !important;
+  cursor: not-allowed;
+  -webkit-appearance: none !important;
+  appearance: none !important;
+}
+
 .circle-btn:hover { background: var(--color-surface-active); }
-.circle-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+.circle-btn:disabled {
+  opacity: 0.3 !important;
+  cursor: not-allowed;
+  -webkit-appearance: none !important;
+  appearance: none !important;
+}
 
 /* ── Upload overlay ──────────────────────────────────────────────── */
 .upload-overlay {
