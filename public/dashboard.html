@@ -10,6 +10,28 @@
 </head>
 <body>
 
+  <!-- Host warning overlay -->
+  <div id="host-warning" style="display: none; position: fixed; inset: 0; background: var(--color-bg); z-index: 1000; justify-content: center; align-items: center; padding: var(--space-6);">
+    <div class="card" style="max-width: 480px; width: 100%; text-align: center; border-color: var(--color-danger);">
+      <div style="font-size: 48px; color: var(--color-danger); margin-bottom: var(--space-4);">
+        <i class="ti ti-alert-triangle"></i>
+      </div>
+      <h1 style="color: var(--color-danger); margin-bottom: var(--space-2); font-size: 18px;">Dashboard Must Run Locally</h1>
+      <p style="font-size: 13px; color: var(--ink-secondary); margin-bottom: var(--space-6); line-height: 1.6;">
+        This dashboard is hosted on GitHub Pages, but it needs the running local server to manage your files and receive video transfers.
+      </p>
+      <div style="background: var(--color-surface); border: 0.5px solid var(--color-border); padding: var(--space-4); border-radius: var(--radius-md); text-align: left; margin-bottom: var(--space-6); font-family: var(--font-mono); font-size: 12px; line-height: 1.5;">
+        <span style="color: var(--ink-muted);"># How to run locally:</span><br>
+        1. Open your terminal<br>
+        2. Run: <span style="color: var(--color-primary);">npm run dev</span><br>
+        3. Open: <a href="http://localhost:3000/dashboard" style="color: var(--color-secondary); font-weight: 500;">http://localhost:3000/dashboard</a>
+      </div>
+      <a href="http://localhost:3000/dashboard" class="btn btn-primary" style="width: 100%;">
+        Go to Local Dashboard
+      </a>
+    </div>
+  </div>
+
   <!-- Nav strip -->
   <nav class="nav-strip">
     <div>
@@ -103,6 +125,12 @@
     // IMPORTANT: Set this to your GitHub Pages URL for production
     const GITHUB_PAGES_BASE = 'https://theronvspr.github.io/rec.relay';
     const LOCAL_BASE = window.location.origin; // http://localhost:3000
+
+    // Prevent running dashboard remotely on GitHub Pages
+    if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+      document.getElementById('host-warning').style.display = 'flex';
+      throw new Error('rec.relay: Dashboard must be run on localhost, not GitHub Pages.');
+    }
 
     // ── State ─────────────────────────────────────────────────────
     let allFiles = [];
