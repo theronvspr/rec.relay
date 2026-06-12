@@ -210,12 +210,12 @@
       });
     }
 
-    // ── Handle incoming WebRTC data ───────────────────────────────
     function handleIncomingData(data, peerId) {
       if (typeof data === 'string') {
         const msg = JSON.parse(data);
 
         if (msg.type === 'file-start') {
+          console.log(`Starting file receipt: ${msg.filename} (${msg.totalSize} bytes)`);
           incomingFile = {
             filename: msg.filename,
             mimeType: msg.mimeType,
@@ -227,14 +227,16 @@
         }
 
         if (msg.type === 'file-end' && incomingFile) {
+          console.log(`Finished receiving file: ${incomingFile.filename}. Total received size: ${incomingFile.received} bytes. Assembling blob...`);
           // Assemble blob and upload to localhost
           const blob = new Blob(incomingFile.buffers, { type: incomingFile.mimeType });
           uploadToLocalServer(blob, incomingFile.filename);
           incomingFile = null;
         }
-      } else if (data instanceof ArrayBuffer && incomingFile) {
+      } else if (incomingFile) {
         incomingFile.buffers.push(data);
-        incomingFile.received += data.byteLength;
+        const chunkSize = data.byteLength || data.size || 0;
+        incomingFile.received += chunkSize;
       }
     }
 
