@@ -10,7 +10,7 @@ import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const APP_VERSION = '3.0.0';
+const APP_VERSION = '3.2.0';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -90,7 +90,7 @@ app.get('/api/server-info', (_req, res) => {
       if (iface.family === 'IPv4' && !iface.internal) ips.push(iface.address);
     }
   }
-  res.json({ success: true, localIPs: ips, port: PORT });
+  res.json({ success: true, localIPs: ips, port: server.address()?.port || PORT });
 });
 
 // ── API: Check for updates via GitHub ──────────────────────────────
@@ -198,7 +198,15 @@ function openBrowser(url) {
 // ── Start server ────────────────────────────────────────────────────
 const server = http.createServer(app);
 
-server.listen(PORT, HOST, () => {
+let currentTryPort = PORT;
+
+function startServer(port) {
+  currentTryPort = port;
+  server.listen(port, HOST);
+}
+
+server.on('listening', () => {
+  const boundPort = server.address().port;
   const ifaces = os.networkInterfaces();
   const ips = [];
   for (const name in ifaces) {
@@ -211,17 +219,29 @@ server.listen(PORT, HOST, () => {
   console.log('  rec.relay');
   console.log('  record on mobile, land on PC');
   console.log('  ─────────────────────────────');
-  console.log(`  Dashboard:  http://localhost:${PORT}/dashboard`);
+  console.log(`  Dashboard:  http://localhost:${boundPort}/dashboard`);
   if (ips.length) {
     console.log(`  LAN IP:     ${ips[0]}`);
 
-    QRCode.toString(`http://localhost:${PORT}/dashboard`, { type: 'terminal', small: true }, (err, qr) => {
+    QRCode.toString(`http://localhost:${boundPort}/dashboard`, { type: 'terminal', small: true }, (err, qr) => {
       if (!err) { console.log(''); console.log(qr); }
     });
   }
   console.log('');
 
   if (!process.env.RUNNING_IN_ELECTRON) {
-    openBrowser(`http://localhost:${PORT}/dashboard`);
+    openBrowser(`http://localhost:${boundPort}/dashboard`);
   }
 });
+
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    const nextPort = parseInt(currentTryPort, 10) + 1;
+    console.log(`Port ${currentTryPort} is busy. Trying port ${nextPort}...`);
+    startServer(nextPort);
+  } else {
+    console.error('Server error:', err);
+  }
+});
+
+startServer(currentTryPort);
