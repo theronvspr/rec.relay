@@ -9,7 +9,7 @@
   },
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js",
+    "dev": "nodemon --ignore uploads/ server.js",
     "electron:start": "electron .",
     "electron:build": "electron-builder --win --publish always"
   },
