@@ -157,6 +157,9 @@ app.post('/upload', upload.single('video'), (req, res) => {
     comment: meta[filename].comment,
     musicLink: meta[filename].musicLink
   });
+  if (typeof tuiTriggerRedraw === 'function') {
+    tuiTriggerRedraw();
+  }
   res.json({ success: true, filename, streamUrl });
 });
 
@@ -254,6 +257,9 @@ app.post('/api/files/:filename/metadata', (req, res) => {
   writeMetadata(meta);
 
   broadcast('update_file_metadata', { filename, metadata: meta[filename] });
+  if (typeof tuiTriggerRedraw === 'function') {
+    tuiTriggerRedraw();
+  }
   res.json({ success: true, metadata: meta[filename] });
 });
 
@@ -274,18 +280,28 @@ app.delete('/files/:filename', (req, res) => {
     }
 
     broadcast('delete_file', { filename: req.params.filename });
+    if (typeof tuiTriggerRedraw === 'function') {
+      tuiTriggerRedraw();
+    }
     res.json({ success: true });
   });
 });
 
 // ── Interactive CLI Mode ─────────────────────────────────────────────
-let cliSearchQuery = '';
+let tuiTriggerRedraw = null;
 
 function initCliMode(boundPort) {
   readline.emitKeypressEvents(process.stdin);
   if (process.stdin.isTTY) {
     process.stdin.setRawMode(true);
   }
+
+  let activePane = 'list'; // 'list' or 'calendar'
+  let selectedListIndex = 0;
+  let selectedCalendarDateStr = ''; // YYYY-MM-DD
+  let calendarCursorDate = new Date();
+  let showQrOverlay = false;
+  let tuiSearchQuery = '';
 
   function getFriendlySize(bytes) {
     if (!bytes) return '0 B';
@@ -294,42 +310,18 @@ function initCliMode(boundPort) {
     return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${u[i]}`;
   }
 
-  function printHotkeyBar() {
-    console.log('\n  Interactive Hotkeys:');
-    console.log('  \x1b[32m[l]\x1b[0m List recordings   \x1b[32m[f]\x1b[0m Filter/Search recordings');
-    console.log('  \x1b[32m[o]\x1b[0m Open dashboard     \x1b[32m[h]\x1b[0m Show help');
-    console.log('  \x1b[32m[q]\x1b[0m Quit server');
-    console.log('');
+  function getDStr(date) {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
   }
 
-  process.stdin.on('keypress', (str, key) => {
-    if (key.ctrl && key.name === 'c') {
-      process.exit();
-    }
-
-    if (key.name === 'l') {
-      listCliFiles();
-    } else if (key.name === 'f') {
-      promptCliFilter();
-    } else if (key.name === 'o') {
-      console.log('  Opening dashboard in browser...');
-      openBrowser(`http://localhost:${boundPort}/dashboard`);
-    } else if (key.name === 'h') {
-      printCliHelp();
-    } else if (key.name === 'q') {
-      console.log('  Shutting down rec.relay. Goodbye!');
-      process.exit();
-    }
-  });
-
-  function listCliFiles() {
-    fs.readdir(uploadDir, (err, files) => {
-      if (err) {
-        console.log('  \x1b[31mError reading uploads directory.\x1b[0m');
-        return;
-      }
+  function readFilesFromDisk() {
+    try {
+      const files = fs.readdirSync(uploadDir);
       const metadata = readMetadata();
-      let list = files
+      return files
         .filter(f => f.startsWith('recording-'))
         .map(f => {
           const s = fs.statSync(path.join(uploadDir, f));
@@ -344,48 +336,300 @@ function initCliMode(boundPort) {
           };
         })
         .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-
-      if (cliSearchQuery) {
-        const query = cliSearchQuery.toLowerCase();
-        list = list.filter(f => {
-          const commentMatch = f.comment.toLowerCase().includes(query);
-          const tagMatch = f.tags.some(t => t.toLowerCase().includes(query));
-          return commentMatch || tagMatch;
-        });
-      }
-
-      console.log('\n  ───────────────────────────────────────');
-      if (cliSearchQuery) {
-        console.log(`  \x1b[36mRecordings matching: "${cliSearchQuery}"\x1b[0m`);
-      } else {
-        console.log('  \x1b[36mAll stored recordings:\x1b[0m');
-      }
-      console.log('  ───────────────────────────────────────');
-
-      if (list.length === 0) {
-        console.log('  (No recordings found)');
-      } else {
-        list.forEach((f, idx) => {
-          const dateStr = new Date(f.createdAt).toLocaleDateString();
-          const timeStr = new Date(f.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-          console.log(`  ${idx + 1}. \x1b[33m${f.filename}\x1b[0m (${getFriendlySize(f.size)}) - ${dateStr} ${timeStr}`);
-          if (f.comment) {
-            console.log(`     \x1b[37m"${f.comment}"\x1b[0m`);
-          }
-          if (f.tags.length) {
-            console.log(`     Tags: ${f.tags.map(t => `#${t}`).join(', ')}`);
-          }
-          if (f.musicLink) {
-            console.log(`     Music: \x1b[34m${f.musicLink}\x1b[0m`);
-          }
-          console.log('');
-        });
-      }
-      printHotkeyBar();
-    });
+    } catch (err) {
+      return [];
+    }
   }
 
-  function promptCliFilter() {
+  function saveMetadataLocally(filename, comment, tags, musicLink) {
+    const meta = readMetadata();
+    meta[filename] = {
+      tags: Array.isArray(tags) ? tags.map(t => t.trim()).filter(Boolean) : [],
+      comment: typeof comment === 'string' ? comment.trim() : '',
+      musicLink: typeof musicLink === 'string' ? musicLink.trim() : ''
+    };
+    writeMetadata(meta);
+    broadcast('update_file_metadata', { filename, metadata: meta[filename] });
+  }
+
+  function deleteFileLocally(filename) {
+    const safePath = path.resolve(uploadDir, filename);
+    if (!fs.existsSync(safePath)) return;
+    try {
+      fs.unlinkSync(safePath);
+      const meta = readMetadata();
+      if (meta[filename]) {
+        delete meta[filename];
+        writeMetadata(meta);
+      }
+      broadcast('delete_file', { filename });
+    } catch (err) {
+      // Ignore
+    }
+  }
+
+  function makeHyperlink(url, text, visualWidth) {
+    const cleanText = text.slice(0, visualWidth);
+    const paddedText = cleanText.padEnd(visualWidth);
+    return `\u001b]8;;${url}\u0007${paddedText}\u001b]8;;\u0007`;
+  }
+
+  function generateAsciiCalendar(cursorDate, selectedDateStr, files, activePane) {
+    const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const year = cursorDate.getFullYear();
+    const month = cursorDate.getMonth();
+    const firstDay = new Date(year, month, 1).getDay();
+    const totalDays = new Date(year, month + 1, 0).getDate();
+    const todayStr = getDStr(new Date());
+
+    const daysWithRec = new Set(
+      files.map(f => getDStr(new Date(f.createdAt)))
+    );
+
+    const lines = [];
+    const title = `${MONTHS[month]} ${year}`;
+    const pad = Math.floor((22 - title.length) / 2);
+    lines.push(' '.repeat(Math.max(0, pad)) + `\x1b[1m\x1b[35m${title}\x1b[0m`);
+    lines.push(' Su Mo Tu We Th Fr Sa');
+
+    let currentLine = '';
+    for (let i = 0; i < firstDay; i++) {
+      currentLine += '   ';
+    }
+
+    const cursorDateStr = getDStr(cursorDate);
+
+    for (let day = 1; day <= totalDays; day++) {
+      const cellDateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      let cell = String(day).padStart(2, ' ');
+      
+      const isToday = cellDateStr === todayStr;
+      const isSelected = cellDateStr === selectedDateStr;
+      const isCursor = cellDateStr === cursorDateStr;
+      const hasRec = daysWithRec.has(cellDateStr);
+
+      if (isCursor && activePane === 'calendar') {
+        cell = `\x1b[46m\x1b[30m${cell}\x1b[0m`;
+      } else if (isSelected) {
+        cell = `\x1b[43m\x1b[30m${cell}\x1b[0m`;
+      } else if (isToday) {
+        cell = `\x1b[33m\x1b[4m${cell}\x1b[0m`;
+      } else if (hasRec) {
+        cell = `\x1b[32m\x1b[1m${cell}\x1b[0m`;
+      }
+
+      currentLine += ' ' + cell;
+
+      if ((firstDay + day) % 7 === 0 || day === totalDays) {
+        if (day === totalDays) {
+          const remaining = 7 - ((firstDay + day) % 7);
+          if (remaining < 7) {
+            currentLine += '   '.repeat(remaining);
+          }
+        }
+        lines.push(currentLine);
+        currentLine = '';
+      }
+    }
+    
+    while (lines.length < 8) {
+      lines.push(' '.repeat(21));
+    }
+
+    return lines;
+  }
+
+  // Pre-generate QR code representation
+  let cachedQrString = '';
+  const ips = [];
+  const ifaces = os.networkInterfaces();
+  for (const name in ifaces) {
+    for (const iface of ifaces[name]) {
+      if (iface.family === 'IPv4' && !iface.internal) ips.push(iface.address);
+    }
+  }
+  const ipStr = ips.length ? ips[0] : '127.0.0.1';
+  const mobileUrl = `http://${ipStr}:${boundPort}/`;
+
+  QRCode.toString(mobileUrl, { type: 'terminal', small: true }, (err, qr) => {
+    if (!err) {
+      cachedQrString = qr;
+    }
+  });
+
+  function drawQrScreen() {
+    process.stdout.write('\x1b[2J\x1b[H');
+    console.log('\n  ┌──────────────────────────────────────────────────────────┐');
+    console.log('  │                  CONNECT YOUR MOBILE PHONE               │');
+    console.log('  └──────────────────────────────────────────────────────────┘\n');
+    if (cachedQrString) {
+      console.log(cachedQrString);
+    } else {
+      console.log('  Generating QR Code...');
+    }
+    console.log(`\n  URL: \x1b[36m${mobileUrl}\x1b[0m`);
+    console.log('\n  Press \x1b[32m[c]\x1b[0m to close this connection window and return to dashboard.');
+  }
+
+  function drawScreen() {
+    if (showQrOverlay) {
+      drawQrScreen();
+      return;
+    }
+
+    const cols = process.stdout.columns || 80;
+    const screenRows = [];
+    
+    // Header
+    screenRows.push(`  \x1b[1m\x1b[36mrec.relay\x1b[0m v${APP_VERSION}  ──  Record on mobile, land on PC  ` + '─'.repeat(Math.max(0, cols - 50)));
+    screenRows.push('');
+    
+    const allFiles = readFilesFromDisk();
+    let filteredFiles = allFiles;
+    if (selectedCalendarDateStr) {
+      filteredFiles = filteredFiles.filter(f => getDStr(new Date(f.createdAt)) === selectedCalendarDateStr);
+    }
+    if (tuiSearchQuery) {
+      const query = tuiSearchQuery.toLowerCase();
+      filteredFiles = filteredFiles.filter(f => {
+        return (f.comment || '').toLowerCase().includes(query) ||
+               (f.tags || []).some(t => t.toLowerCase().includes(query));
+      });
+    }
+    
+    if (selectedListIndex >= filteredFiles.length) {
+      selectedListIndex = Math.max(0, filteredFiles.length - 1);
+    }
+    
+    const calendarLines = generateAsciiCalendar(calendarCursorDate, selectedCalendarDateStr, allFiles, activePane);
+    
+    const calendarColWidth = 24;
+    const dividerCol = ' │ ';
+    const tableWidth = cols - calendarColWidth - dividerCol.length - 4;
+    
+    const colWidthIndex = 5;
+    const colWidthSize = 9;
+    const colWidthTags = Math.floor(tableWidth * 0.25);
+    const colWidthName = Math.max(10, tableWidth - colWidthIndex - colWidthSize - colWidthTags - 6);
+    
+    const tableHeader = ' ' + 
+      'Idx'.padEnd(colWidthIndex) + ' │ ' + 
+      'Filename'.padEnd(colWidthName) + ' │ ' + 
+      'Size'.padEnd(colWidthSize) + ' │ ' + 
+      'Tags';
+    const tableDivider = '─'.repeat(tableWidth);
+    
+    const tableLines = [];
+    tableLines.push(tableHeader);
+    tableLines.push(tableDivider);
+    
+    const viewportHeight = 8;
+    let startIdx = 0;
+    if (selectedListIndex >= startIdx + viewportHeight) {
+      startIdx = selectedListIndex - viewportHeight + 1;
+    } else if (selectedListIndex < startIdx) {
+      startIdx = selectedListIndex;
+    }
+    
+    if (filteredFiles.length === 0) {
+      tableLines.push(' '.repeat(Math.max(0, Math.floor((tableWidth - 16) / 2))) + '(No recordings)');
+    } else {
+      for (let i = startIdx; i < Math.min(filteredFiles.length, startIdx + viewportHeight); i++) {
+        const f = filteredFiles[i];
+        const isSelected = i === selectedListIndex;
+        const isPaneActive = activePane === 'list';
+        
+        const idxStr = String(i + 1).padEnd(colWidthIndex);
+        const sizeStr = getFriendlySize(f.size).padEnd(colWidthSize);
+        const tagsStr = (f.tags || []).join(', ').slice(0, colWidthTags).padEnd(colWidthTags);
+        
+        const absolutePath = path.resolve(uploadDir, f.filename);
+        const fileUrl = 'file:///' + absolutePath.replace(/\\/g, '/');
+        const nameLink = makeHyperlink(fileUrl, f.filename, colWidthName);
+        
+        let rowStr = ' ' + idxStr + ' │ ' + nameLink + ' │ ' + sizeStr + ' │ ' + tagsStr;
+        
+        if (isSelected) {
+          if (isPaneActive) {
+            rowStr = `\x1b[42m\x1b[30m${rowStr}\x1b[0m`;
+          } else {
+            rowStr = `\x1b[7m${rowStr}\x1b[0m`;
+          }
+        }
+        tableLines.push(rowStr);
+      }
+    }
+    
+    while (tableLines.length < viewportHeight + 2) {
+      tableLines.push('');
+    }
+    
+    for (let i = 0; i < Math.max(calendarLines.length, tableLines.length); i++) {
+      const calLine = (calendarLines[i] || '').padEnd(calendarColWidth);
+      const tblLine = tableLines[i] || '';
+      screenRows.push(calLine + dividerCol + tblLine);
+    }
+    
+    screenRows.push('');
+    
+    const selectedFile = filteredFiles[selectedListIndex];
+    if (selectedFile) {
+      const absolutePath = path.resolve(uploadDir, selectedFile.filename);
+      const fileUrl = 'file:///' + absolutePath.replace(/\\/g, '/');
+      const streamUrl = `http://localhost:${boundPort}/stream/${selectedFile.filename}`;
+      
+      const appLink = `\u001b]8;;${fileUrl}\u0007[Open in App / VLC]\u001b]8;;\u0007`;
+      const webLink = `\u001b]8;;${streamUrl}\u0007[Stream in Browser]\u001b]8;;\u0007`;
+      
+      let musicLinkLine = 'None';
+      if (selectedFile.musicLink) {
+        const musicClickable = `\u001b]8;;${selectedFile.musicLink}\u0007${selectedFile.musicLink}\u001b]8;;\u0007`;
+        musicLinkLine = `\x1b[34m${musicClickable}\x1b[0m`;
+      }
+      
+      const tagsLine = selectedFile.tags && selectedFile.tags.length ? selectedFile.tags.map(t => `#${t}`).join(' ') : 'None';
+      const commentLine = selectedFile.comment ? `"${selectedFile.comment}"` : 'None';
+      
+      screenRows.push('  ┌─ SELECTED RECORDING DETAILS ──────────────────────────────────────────────────┐');
+      screenRows.push(`  │  File:   \x1b[33m${selectedFile.filename}\x1b[0m`);
+      screenRows.push(`  │  Links:  \x1b[32m${appLink}\x1b[0m  -or-  \x1b[32m${webLink}\x1b[0m`);
+      screenRows.push(`  │  Date:   ${new Date(selectedFile.createdAt).toLocaleString()}`);
+      screenRows.push(`  │  Tags:   \x1b[36m${tagsLine}\x1b[0m`);
+      screenRows.push(`  │  Music:  ${musicLinkLine}`);
+      screenRows.push(`  │  Notes:  \x1b[37m${commentLine}\x1b[0m`);
+      screenRows.push('  └───────────────────────────────────────────────────────────────────────────────┘');
+    } else {
+      screenRows.push('  ┌─ SELECTED RECORDING DETAILS ──────────────────────────────────────────────────┐');
+      screenRows.push('  │  No recording selected.                                                       │');
+      screenRows.push('  │                                                                               │');
+      screenRows.push('  │                                                                               │');
+      screenRows.push('  └───────────────────────────────────────────────────────────────────────────────┘');
+    }
+    
+    screenRows.push('');
+    
+    const serverUrl = `http://${ipStr}:${boundPort}/`;
+    
+    let filterStatus = 'None';
+    if (selectedCalendarDateStr && tuiSearchQuery) {
+      filterStatus = `Date: ${selectedCalendarDateStr} + Search: "${tuiSearchQuery}"`;
+    } else if (selectedCalendarDateStr) {
+      filterStatus = `Date: ${selectedCalendarDateStr}`;
+    } else if (tuiSearchQuery) {
+      filterStatus = `Search: "${tuiSearchQuery}"`;
+    }
+    
+    screenRows.push(`  \x1b[1mServer URL:\x1b[0m \x1b[36m${serverUrl}\x1b[0m   │   \x1b[1mActive Filter:\x1b[0m \x1b[35m${filterStatus}\x1b[0m`);
+    screenRows.push('  ────────────────────────────────────────────────────────────────────────────────');
+    screenRows.push('  \x1b[1m[Tab]\x1b[0m Switch Pane   \x1b[1m[Arrows]\x1b[0m Navigate   \x1b[1m[Enter]\x1b[0m Filter Date / Open File');
+    screenRows.push('  \x1b[1m[f]\x1b[0m Filter Search   \x1b[1m[c]\x1b[0m QR Code      \x1b[1m[e]\x1b[0m Edit Details   \x1b[1m[d]\x1b[0m Web Dashboard');
+    screenRows.push('  \x1b[1m[Del/Backspace]\x1b[0m Delete      \x1b[1m[q]\x1b[0m Quit');
+    
+    process.stdout.write('\x1b[2J\x1b[H');
+    process.stdout.write(screenRows.join('\n') + '\n');
+  }
+
+  function promptSearch() {
     if (process.stdin.isTTY) {
       process.stdin.setRawMode(false);
     }
@@ -393,40 +637,240 @@ function initCliMode(boundPort) {
       input: process.stdin,
       output: process.stdout
     });
-
-    rl.question('\n  Search term (tag or comment phrase, or press Enter for all): ', (answer) => {
+    
+    process.stdout.write('\x1b[2J\x1b[H');
+    rl.question('\n  Search Term (Enter "all" or blank to clear filter): ', (answer) => {
       rl.close();
       if (process.stdin.isTTY) {
         process.stdin.setRawMode(true);
       }
       
       const query = answer.trim();
-      if (!query || query.toLowerCase() === 'all recordings') {
-        cliSearchQuery = '';
-        console.log('  \x1b[32mFilter cleared. Showing all recordings.\x1b[0m');
+      if (!query || query.toLowerCase() === 'all' || query.toLowerCase() === 'all recordings') {
+        tuiSearchQuery = '';
       } else {
-        cliSearchQuery = query;
-        console.log(`  \x1b[32mFiltering by: "${cliSearchQuery}"\x1b[0m`);
+        tuiSearchQuery = query;
       }
-      listCliFiles();
+      selectedListIndex = 0;
+      drawScreen();
     });
   }
 
-  function printCliHelp() {
-    console.log('\n  ───────────────────────────────────────');
-    console.log('  \x1b[36mKeyboard Actions Help:\x1b[0m');
-    console.log('  ───────────────────────────────────────');
-    console.log('  [l] - List all recordings stored in the uploads directory.');
-    console.log('  [f] - Enter a search phrase to filter files by comment text or tag.');
-    console.log('        (Type "All recordings" or leave blank to clear the filter).');
-    console.log('  [o] - Launch your default browser and open the dashboard page.');
-    console.log('  [h] - View this help documentation.');
-    console.log('  [q] - Quit and shut down the local server.');
-    console.log('  Ctrl+C - Force terminate the process immediately.');
-    printHotkeyBar();
+  function promptDelete() {
+    const allFiles = readFilesFromDisk();
+    let filteredFiles = allFiles;
+    if (selectedCalendarDateStr) {
+      filteredFiles = filteredFiles.filter(f => getDStr(new Date(f.createdAt)) === selectedCalendarDateStr);
+    }
+    if (tuiSearchQuery) {
+      const query = tuiSearchQuery.toLowerCase();
+      filteredFiles = filteredFiles.filter(f => {
+        return (f.comment || '').toLowerCase().includes(query) ||
+               (f.tags || []).some(t => t.toLowerCase().includes(query));
+      });
+    }
+    
+    const selFile = filteredFiles[selectedListIndex];
+    if (!selFile) return;
+    
+    if (process.stdin.isTTY) {
+      process.stdin.setRawMode(false);
+    }
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout
+    });
+    
+    process.stdout.write('\x1b[2J\x1b[H');
+    rl.question(`\n  Are you sure you want to delete ${selFile.filename}? (y/N): `, (answer) => {
+      rl.close();
+      if (process.stdin.isTTY) {
+        process.stdin.setRawMode(true);
+      }
+      
+      if (answer.trim().toLowerCase() === 'y') {
+        deleteFileLocally(selFile.filename);
+        selectedListIndex = 0;
+      }
+      drawScreen();
+    });
   }
 
-  printHotkeyBar();
+  function promptEditMetadata() {
+    const allFiles = readFilesFromDisk();
+    let filteredFiles = allFiles;
+    if (selectedCalendarDateStr) {
+      filteredFiles = filteredFiles.filter(f => getDStr(new Date(f.createdAt)) === selectedCalendarDateStr);
+    }
+    if (tuiSearchQuery) {
+      const query = tuiSearchQuery.toLowerCase();
+      filteredFiles = filteredFiles.filter(f => {
+        return (f.comment || '').toLowerCase().includes(query) ||
+               (f.tags || []).some(t => t.toLowerCase().includes(query));
+      });
+    }
+    
+    const selFile = filteredFiles[selectedListIndex];
+    if (!selFile) return;
+    
+    if (process.stdin.isTTY) {
+      process.stdin.setRawMode(false);
+    }
+    
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout
+    });
+    
+    process.stdout.write('\x1b[2J\x1b[H');
+    console.log(`\n  Editing details for: \x1b[33m${selFile.filename}\x1b[0m\n`);
+    
+    rl.question(`  Comment [${selFile.comment || 'None'}]: `, (commentAns) => {
+      const finalComment = commentAns.trim() !== '' ? commentAns.trim() : (selFile.comment || '');
+      
+      rl.question(`  Tags (comma-separated) [${(selFile.tags || []).join(', ') || 'None'}]: `, (tagsAns) => {
+        let finalTags = selFile.tags || [];
+        if (tagsAns.trim() !== '') {
+          finalTags = tagsAns.split(',').map(t => t.trim()).filter(Boolean);
+        }
+        
+        rl.question(`  Music Reference Link [${selFile.musicLink || 'None'}]: `, (musicAns) => {
+          const finalMusicLink = musicAns.trim() !== '' ? musicAns.trim() : (selFile.musicLink || '');
+          
+          rl.close();
+          if (process.stdin.isTTY) {
+            process.stdin.setRawMode(true);
+          }
+          
+          saveMetadataLocally(selFile.filename, finalComment, finalTags, finalMusicLink);
+          drawScreen();
+        });
+      });
+    });
+  }
+
+  process.stdin.on('keypress', (str, key) => {
+    if (!key) return;
+    
+    if (key.ctrl && key.name === 'c') {
+      process.exit();
+    }
+    
+    if (showQrOverlay) {
+      if (key.name === 'c' || key.name === 'escape') {
+        showQrOverlay = false;
+        drawScreen();
+      } else if (key.name === 'q') {
+        process.exit();
+      }
+      return;
+    }
+    
+    if (key.name === 'tab') {
+      activePane = activePane === 'list' ? 'calendar' : 'list';
+      drawScreen();
+      return;
+    }
+    
+    if (key.name === 'q') {
+      console.log('  Shutting down rec.relay. Goodbye!');
+      process.exit();
+    }
+    
+    if (key.name === 'd') {
+      console.log('  Opening dashboard in browser...');
+      openBrowser(`http://localhost:${boundPort}/dashboard`);
+      drawScreen();
+      return;
+    }
+    
+    if (key.name === 'c') {
+      showQrOverlay = true;
+      drawScreen();
+      return;
+    }
+    
+    if (key.name === 'f') {
+      promptSearch();
+      return;
+    }
+    
+    if (key.name === 'e') {
+      promptEditMetadata();
+      return;
+    }
+    
+    if (key.name === 'delete' || key.name === 'backspace') {
+      promptDelete();
+      return;
+    }
+    
+    if (activePane === 'list') {
+      const allFiles = readFilesFromDisk();
+      let filteredFiles = allFiles;
+      if (selectedCalendarDateStr) {
+        filteredFiles = filteredFiles.filter(f => getDStr(new Date(f.createdAt)) === selectedCalendarDateStr);
+      }
+      if (tuiSearchQuery) {
+        const query = tuiSearchQuery.toLowerCase();
+        filteredFiles = filteredFiles.filter(f => {
+          return (f.comment || '').toLowerCase().includes(query) ||
+                 (f.tags || []).some(t => t.toLowerCase().includes(query));
+        });
+      }
+      
+      if (key.name === 'up') {
+        if (selectedListIndex > 0) {
+          selectedListIndex--;
+          drawScreen();
+        }
+      } else if (key.name === 'down') {
+        if (selectedListIndex < filteredFiles.length - 1) {
+          selectedListIndex++;
+          drawScreen();
+        }
+      } else if (key.name === 'return' || key.name === 'enter') {
+        const selFile = filteredFiles[selectedListIndex];
+        if (selFile) {
+          const streamUrl = `http://localhost:${boundPort}/stream/${selFile.filename}`;
+          openBrowser(streamUrl);
+        }
+      }
+    } else if (activePane === 'calendar') {
+      if (key.name === 'left') {
+        calendarCursorDate.setDate(calendarCursorDate.getDate() - 1);
+        drawScreen();
+      } else if (key.name === 'right') {
+        calendarCursorDate.setDate(calendarCursorDate.getDate() + 1);
+        drawScreen();
+      } else if (key.name === 'up') {
+        calendarCursorDate.setDate(calendarCursorDate.getDate() - 7);
+        drawScreen();
+      } else if (key.name === 'down') {
+        calendarCursorDate.setDate(calendarCursorDate.getDate() + 7);
+        drawScreen();
+      } else if (key.name === 'return' || key.name === 'enter') {
+        const cursorDStr = getDStr(calendarCursorDate);
+        if (selectedCalendarDateStr === cursorDStr) {
+          selectedCalendarDateStr = '';
+        } else {
+          selectedCalendarDateStr = cursorDStr;
+        }
+        selectedListIndex = 0;
+        drawScreen();
+      }
+    }
+  });
+
+  process.stdout.on('resize', () => {
+    drawScreen();
+  });
+
+  tuiTriggerRedraw = () => {
+    drawScreen();
+  };
+
+  drawScreen();
 }
 
 // ── Auto-open browser ───────────────────────────────────────────────
@@ -456,6 +900,11 @@ server.on('listening', () => {
     }
   }
 
+  if (process.env.RUNNING_AS_CLI === 'true') {
+    initCliMode(boundPort);
+    return;
+  }
+
   console.log('');
   console.log('  rec.relay');
   console.log('  record on mobile, land on PC');
@@ -467,18 +916,12 @@ server.on('listening', () => {
     QRCode.toString(`http://localhost:${boundPort}/dashboard`, { type: 'terminal', small: true }, (err, qr) => {
       if (!err) { console.log(''); console.log(qr); }
       console.log('');
-      if (process.env.RUNNING_AS_CLI === 'true') {
-        initCliMode(boundPort);
-      }
     });
   } else {
     console.log('');
-    if (process.env.RUNNING_AS_CLI === 'true') {
-      initCliMode(boundPort);
-    }
   }
 
-  if (!process.env.RUNNING_IN_ELECTRON && process.env.RUNNING_AS_CLI !== 'true') {
+  if (!process.env.RUNNING_IN_ELECTRON) {
     openBrowser(`http://localhost:${boundPort}/dashboard`);
   }
 });

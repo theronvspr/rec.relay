@@ -698,9 +698,9 @@
         if (msg.type === 'new_file') {
           const newFile = {
             ...msg.data,
-            tags: [],
-            comment: '',
-            musicLink: ''
+            tags: msg.data.tags || [],
+            comment: msg.data.comment || '',
+            musicLink: msg.data.musicLink || ''
           };
           allFiles.unshift(newFile);
           renderCalendar();
