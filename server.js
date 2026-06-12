@@ -10,7 +10,7 @@ import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const APP_VERSION = '3.2.0';
+const APP_VERSION = '3.3.0';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
