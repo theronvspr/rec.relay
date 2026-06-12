@@ -57,7 +57,12 @@
 }
 
 /* ── Reset ────────────────────────────────────────────────────────── */
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent !important;
+}
 
 button {
   -webkit-appearance: none !important;
@@ -370,6 +375,17 @@ h3 { font-size: 15px; }
   object-fit: cover;
   pointer-events: none; /* Prevent iOS native play/pause trigger on tap */
 }
+
+/* Hide native controls on iOS Safari */
+.viewfinder-wrap video::-webkit-media-controls,
+.viewfinder-wrap video::-webkit-media-controls-panel,
+.viewfinder-wrap video::-webkit-media-controls-panel-container,
+.viewfinder-wrap video::-webkit-media-controls-start-playback-button {
+  display: none !important;
+  -webkit-appearance: none !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
 .viewfinder-wrap video.mirrored { transform: scaleX(-1); }
 
 .viewfinder-overlay {
@@ -389,6 +405,8 @@ h3 { font-size: 15px; }
   height: 64px;
   border-radius: 50% !important;
   background: #fff !important;
+  background-image: none !important;
+  box-shadow: none !important;
   border: 4px solid var(--color-border) !important;
   cursor: pointer;
   display: flex;
@@ -430,6 +448,8 @@ h3 { font-size: 15px; }
   height: 44px;
   border-radius: 50%;
   background: var(--color-surface);
+  background-image: none !important;
+  box-shadow: none !important;
   border: 0.5px solid var(--color-border);
   color: var(--ink-secondary);
   display: flex;
@@ -444,6 +464,8 @@ h3 { font-size: 15px; }
 }
 .record-btn:disabled {
   background: #fff !important;
+  background-image: none !important;
+  box-shadow: none !important;
   border-color: var(--color-border) !important;
   opacity: 0.4 !important;
   cursor: not-allowed;
@@ -459,6 +481,8 @@ h3 { font-size: 15px; }
   -webkit-appearance: none !important;
   appearance: none !important;
   background-clip: padding-box !important;
+  background-image: none !important;
+  box-shadow: none !important;
 }
 
 /* ── Upload overlay ──────────────────────────────────────────────── */
@@ -524,6 +548,17 @@ h3 { font-size: 15px; }
   z-index: 200;
 }
 .toast.show { transform: translateY(0); opacity: 1; }
+
+@media (max-width: 480px) {
+  .toast {
+    left: 50% !important;
+    right: auto !important;
+    transform: translate(-50%, 100px) !important;
+  }
+  .toast.show {
+    transform: translate(-50%, 0) !important;
+  }
+}
 
 /* ── Layout utilities ────────────────────────────────────────────── */
 .dashboard-layout {

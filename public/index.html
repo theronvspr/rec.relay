@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>rec.relay</title>
   <meta name="description" content="Record on mobile, land on PC, over LAN.">
-  <link rel="stylesheet" href="styles.css?v=2.0.3">
+  <link rel="stylesheet" href="styles.css?v=2.0.4">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css">
 </head>
 <body>
@@ -77,7 +77,7 @@
       </button>
 
       <button id="btn-pause" class="circle-btn" disabled title="Pause recording">
-        <i class="ti ti-pause"></i>
+        <i class="ti ti-player-pause"></i>
       </button>
 
       <div>
@@ -93,7 +93,7 @@
 
     <!-- Version footer -->
     <div style="text-align: center; margin-top: auto; padding: var(--space-4) 0 0 0; font-size: 10px; color: var(--ink-muted); font-family: var(--font-mono);">
-      v2.0.3
+      v2.0.4
     </div>
 
   </div>
@@ -127,7 +127,7 @@
 
   <script>
     // ── Version ───────────────────────────────────────────────────
-    const APP_VERSION = '2.0.3';
+    const APP_VERSION = '2.0.4';
 
     // ── Elements ──────────────────────────────────────────────────
     const viewfinder     = document.getElementById('viewfinder');
@@ -189,11 +189,18 @@
       return name;
     }
 
+    let toastTimeout = null;
     function showMobileToast(msg) {
       if (!toastMsg || !toast) return;
+      if (toastTimeout) {
+        clearTimeout(toastTimeout);
+      }
       toastMsg.textContent = msg;
       toast.classList.add('show');
-      setTimeout(() => toast.classList.remove('show'), 3000);
+      toastTimeout = setTimeout(() => {
+        toast.classList.remove('show');
+        toastTimeout = null;
+      }, 3000);
     }
 
     // ── WebRTC: connect to PC peer ────────────────────────────────
@@ -386,24 +393,46 @@
     }
 
     async function initCamera() {
-      if (mediaStream) mediaStream.getTracks().forEach(t => t.stop());
+      // 1. Release previous stream and wait for hardware to cool down (essential for iOS camera cycling)
+      if (mediaStream) {
+        mediaStream.getTracks().forEach(t => t.stop());
+        mediaStream = null;
+        await new Promise(r => setTimeout(r, 250));
+      }
+      
       try {
         let constraints = {
           audio: true,
           video: {
             width: { ideal: 1280 },
-            height: { ideal: 720 }
+            height: { ideal: 720 },
+            zoom: true // Enable zoom capability discovery on Android Chrome
           }
         };
 
         if (videoDevices.length > 0) {
           const selectedDevice = videoDevices[currentDeviceIndex];
-          constraints.video.deviceId = { exact: selectedDevice.deviceId };
+          // Use standard deviceId constraint (soft match) instead of { exact } constraint
+          // to prevent camera start rejection on budget/strict mobile browsers
+          constraints.video.deviceId = selectedDevice.deviceId;
         } else {
           constraints.video.facingMode = facingMode;
         }
 
-        mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+        try {
+          mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+        } catch (err) {
+          console.warn('Initial getUserMedia constraints failed, trying fallback constraints:', err);
+          // Fallback: try video-only (without audio) and simple device selectors to bypass mic block or aspect failures
+          const fallbackConstraints = {
+            audio: false,
+            video: videoDevices.length > 0
+              ? { deviceId: videoDevices[currentDeviceIndex].deviceId }
+              : { facingMode }
+          };
+          mediaStream = await navigator.mediaDevices.getUserMedia(fallbackConstraints);
+        }
+
         viewfinder.srcObject = mediaStream;
 
         const activeTrack = mediaStream.getVideoTracks()[0];
@@ -492,7 +521,7 @@
 
       // Enable dedicated pause button
       pauseBtn.disabled = false;
-      pauseBtn.innerHTML = '<i class="ti ti-pause"></i>';
+      pauseBtn.innerHTML = '<i class="ti ti-player-pause"></i>';
 
       seconds = 0;
       recTimer.textContent = '00:00';
@@ -579,7 +608,7 @@
       uploadBar.style.width = '0%';
       uploadPct.textContent = '0%';
       pauseBtn.disabled = true;
-      pauseBtn.innerHTML = '<i class="ti ti-pause"></i>';
+      pauseBtn.innerHTML = '<i class="ti ti-player-pause"></i>';
     }
 
     // ── Pause / Resume Event ──────────────────────────────────────
@@ -597,7 +626,7 @@
         isPaused = false;
         recStatus.textContent = 'rec';
         recStatus.className = 'badge badge-error';
-        pauseBtn.innerHTML = '<i class="ti ti-pause"></i>';
+        pauseBtn.innerHTML = '<i class="ti ti-player-pause"></i>';
       }
     });
 
