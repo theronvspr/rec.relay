@@ -471,6 +471,21 @@ function initCliMode(boundPort) {
     console.log('\n  Press \x1b[32m[c]\x1b[0m to close this connection window and return to dashboard.');
   }
 
+  function getVisualLength(str) {
+    const ansiRegex = /[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g;
+    const stripped = str
+      .replace(ansiRegex, '')
+      .replace(/\u001b\]8;;.*?\u0007/g, '')
+      .replace(/\u001b\]8;;\u0007/g, '');
+    return stripped.length;
+  }
+
+  function padVisualEnd(str, targetWidth) {
+    const len = getVisualLength(str);
+    if (len >= targetWidth) return str;
+    return str + ' '.repeat(targetWidth - len);
+  }
+
   function drawScreen() {
     if (showQrOverlay) {
       drawQrScreen();
@@ -565,13 +580,21 @@ function initCliMode(boundPort) {
     }
     
     for (let i = 0; i < Math.max(calendarLines.length, tableLines.length); i++) {
-      const calLine = (calendarLines[i] || '').padEnd(calendarColWidth);
+      const calLine = padVisualEnd(calendarLines[i] || '', calendarColWidth);
       const tblLine = tableLines[i] || '';
       screenRows.push(calLine + dividerCol + tblLine);
     }
     
     screenRows.push('');
     
+    // Responsive details card layout
+    const cardWidth = Math.min(80, cols - 4);
+    function formatBoxLine(label, content) {
+      const innerContent = label ? `\x1b[1m${label.padEnd(8)}\x1b[0m ${content}` : content;
+      const lineWithLeftBorder = `  │  ${innerContent}`;
+      return padVisualEnd(lineWithLeftBorder, cardWidth - 1) + '│';
+    }
+
     const selectedFile = filteredFiles[selectedListIndex];
     if (selectedFile) {
       const absolutePath = path.resolve(uploadDir, selectedFile.filename);
@@ -590,20 +613,20 @@ function initCliMode(boundPort) {
       const tagsLine = selectedFile.tags && selectedFile.tags.length ? selectedFile.tags.map(t => `#${t}`).join(' ') : 'None';
       const commentLine = selectedFile.comment ? `"${selectedFile.comment}"` : 'None';
       
-      screenRows.push('  ┌─ SELECTED RECORDING DETAILS ──────────────────────────────────────────────────┐');
-      screenRows.push(`  │  File:   \x1b[33m${selectedFile.filename}\x1b[0m`);
-      screenRows.push(`  │  Links:  \x1b[32m${appLink}\x1b[0m  -or-  \x1b[32m${webLink}\x1b[0m`);
-      screenRows.push(`  │  Date:   ${new Date(selectedFile.createdAt).toLocaleString()}`);
-      screenRows.push(`  │  Tags:   \x1b[36m${tagsLine}\x1b[0m`);
-      screenRows.push(`  │  Music:  ${musicLinkLine}`);
-      screenRows.push(`  │  Notes:  \x1b[37m${commentLine}\x1b[0m`);
-      screenRows.push('  └───────────────────────────────────────────────────────────────────────────────┘');
+      screenRows.push('  ┌─ SELECTED RECORDING DETAILS ' + '─'.repeat(Math.max(0, cardWidth - 33)) + '┐');
+      screenRows.push(formatBoxLine('File:', `\x1b[33m${selectedFile.filename}\x1b[0m`));
+      screenRows.push(formatBoxLine('Links:', `\x1b[32m${appLink}\x1b[0m  -or-  \x1b[32m${webLink}\x1b[0m`));
+      screenRows.push(formatBoxLine('Date:', new Date(selectedFile.createdAt).toLocaleString()));
+      screenRows.push(formatBoxLine('Tags:', `\x1b[36m${tagsLine}\x1b[0m`));
+      screenRows.push(formatBoxLine('Music:', musicLinkLine));
+      screenRows.push(formatBoxLine('Notes:', `\x1b[37m${commentLine}\x1b[0m`));
+      screenRows.push('  └' + '─'.repeat(Math.max(0, cardWidth - 4)) + '┘');
     } else {
-      screenRows.push('  ┌─ SELECTED RECORDING DETAILS ──────────────────────────────────────────────────┐');
-      screenRows.push('  │  No recording selected.                                                       │');
-      screenRows.push('  │                                                                               │');
-      screenRows.push('  │                                                                               │');
-      screenRows.push('  └───────────────────────────────────────────────────────────────────────────────┘');
+      screenRows.push('  ┌─ SELECTED RECORDING DETAILS ' + '─'.repeat(Math.max(0, cardWidth - 33)) + '┐');
+      screenRows.push(formatBoxLine('', 'No recording selected.'));
+      screenRows.push(formatBoxLine('', ''));
+      screenRows.push(formatBoxLine('', ''));
+      screenRows.push('  └' + '─'.repeat(Math.max(0, cardWidth - 4)) + '┘');
     }
     
     screenRows.push('');
@@ -641,6 +664,7 @@ function initCliMode(boundPort) {
     process.stdout.write('\x1b[2J\x1b[H');
     rl.question('\n  Search Term (Enter "all" or blank to clear filter): ', (answer) => {
       rl.close();
+      process.stdin.resume();
       if (process.stdin.isTTY) {
         process.stdin.setRawMode(true);
       }
@@ -684,6 +708,7 @@ function initCliMode(boundPort) {
     process.stdout.write('\x1b[2J\x1b[H');
     rl.question(`\n  Are you sure you want to delete ${selFile.filename}? (y/N): `, (answer) => {
       rl.close();
+      process.stdin.resume();
       if (process.stdin.isTTY) {
         process.stdin.setRawMode(true);
       }
@@ -738,6 +763,7 @@ function initCliMode(boundPort) {
           const finalMusicLink = musicAns.trim() !== '' ? musicAns.trim() : (selFile.musicLink || '');
           
           rl.close();
+          process.stdin.resume();
           if (process.stdin.isTTY) {
             process.stdin.setRawMode(true);
           }
