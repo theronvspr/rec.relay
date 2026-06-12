@@ -347,6 +347,7 @@ h3 { font-size: 15px; }
   width: 100%;
   height: 100%;
   object-fit: cover;
+  pointer-events: none; /* Prevent iOS native play/pause trigger on tap */
 }
 .viewfinder-wrap video.mirrored { transform: scaleX(-1); }
 
