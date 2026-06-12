@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>rec.relay — dashboard</title>
+  <meta name="description" content="rec.relay PC dashboard. Receive, manage, and stream recordings from your phone.">
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css">
+</head>
+<body>
+
+  <!-- Nav strip -->
+  <nav class="nav-strip">
+    <div>
+      <span class="app-name">rec.relay</span>
+      <span style="color: var(--ink-muted); font-size: 11px; margin-left: var(--space-2);">dashboard</span>
+    </div>
+    <div style="display: flex; align-items: center; gap: var(--space-4);">
+      <span id="peer-status" style="font-size: 11px;">
+        <span class="status-dot waiting"></span>
+        <span id="peer-status-text">Starting...</span>
+      </span>
+      <button id="btn-show-qr" class="btn btn-primary btn-small">
+        <i class="ti ti-qrcode"></i> Connect phone
+      </button>
+    </div>
+  </nav>
+
+  <!-- Main layout -->
+  <div class="dashboard-layout">
+
+    <!-- Left column: Calendar + controls -->
+    <div>
+      <div class="card" style="margin-bottom: var(--space-4);">
+        <div class="calendar-nav">
+          <button id="prev-month"><i class="ti ti-chevron-left"></i></button>
+          <h2 id="calendar-title" style="font-size: 15px;"></h2>
+          <button id="next-month"><i class="ti ti-chevron-right"></i></button>
+        </div>
+        <div class="calendar-header">
+          <div>Su</div><div>Mo</div><div>Tu</div><div>We</div><div>Th</div><div>Fr</div><div>Sa</div>
+        </div>
+        <div id="calendar-days" class="calendar-grid"></div>
+      </div>
+
+      <div style="display: flex; gap: var(--space-2);">
+        <button id="btn-all" class="btn btn-ghost" style="flex: 1; font-size: 12px;">Show all</button>
+        <button id="btn-refresh" class="btn btn-ghost btn-small" title="Refresh">
+          <i class="ti ti-refresh"></i>
+        </button>
+      </div>
+
+      <!-- Connected devices -->
+      <div class="card" style="margin-top: var(--space-4);">
+        <p style="font-size: 11px; color: var(--ink-muted); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: var(--space-2);">Connected devices</p>
+        <div id="connected-devices" style="font-size: 13px; color: var(--ink-secondary);">
+          None
+        </div>
+      </div>
+    </div>
+
+    <!-- Right column: File list -->
+    <div>
+      <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: var(--space-3);">
+        <div>
+          <h2 id="list-title">All recordings</h2>
+          <p id="list-subtitle" style="font-size: 11px; color: var(--ink-muted); margin-top: 2px;">Showing all stored files</p>
+        </div>
+        <span id="file-count" class="badge badge-idle">0 files</span>
+      </div>
+
+      <div id="files-container" class="file-list">
+        <div class="empty-state">Loading...</div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- QR Modal -->
+  <div id="qr-modal" class="qr-modal">
+    <div class="qr-modal-content">
+      <h3 style="margin-bottom: var(--space-1);">Connect your phone</h3>
+      <p style="font-size: 12px; color: var(--ink-secondary); margin-bottom: var(--space-4);">Scan this code to open the recorder. Both devices must be on the same Wi-Fi.</p>
+      <div class="qr-image">
+        <img id="qr-img" alt="QR Code">
+      </div>
+      <p id="qr-url" style="font-family: var(--font-mono); font-size: 11px; color: var(--color-primary); margin: var(--space-3) 0; word-break: break-all;"></p>
+      <button id="btn-close-qr" class="btn btn-ghost" style="width: 100%;">Close</button>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="toast">
+    <span id="toast-msg"></span>
+  </div>
+
+  <!-- PeerJS -->
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+
+  <script>
+    // ── Config ────────────────────────────────────────────────────
+    // IMPORTANT: Set this to your GitHub Pages URL for production
+    const GITHUB_PAGES_BASE = 'https://theronvspr.github.io/rec.relay';
+    const LOCAL_BASE = window.location.origin; // http://localhost:3000
+
+    // ── State ─────────────────────────────────────────────────────
+    let allFiles = [];
+    let selectedDate = null;
+    let calendarDate = new Date();
+    let myPeerId = null;
+    let connectedPeers = new Map(); // peerId -> connection
+    let incomingFile = null; // { filename, mimeType, totalSize, buffers }
+
+    // ── Elements ──────────────────────────────────────────────────
+    const peerStatusDot  = document.querySelector('#peer-status .status-dot');
+    const peerStatusText = document.getElementById('peer-status-text');
+    const btnShowQr      = document.getElementById('btn-show-qr');
+    const qrModal        = document.getElementById('qr-modal');
+    const qrImg          = document.getElementById('qr-img');
+    const qrUrl          = document.getElementById('qr-url');
+    const btnCloseQr     = document.getElementById('btn-close-qr');
+    const calendarDays   = document.getElementById('calendar-days');
+    const calendarTitle  = document.getElementById('calendar-title');
+    const prevMonth      = document.getElementById('prev-month');
+    const nextMonth      = document.getElementById('next-month');
+    const filesContainer = document.getElementById('files-container');
+    const listTitle      = document.getElementById('list-title');
+    const listSubtitle   = document.getElementById('list-subtitle');
+    const fileCount      = document.getElementById('file-count');
+    const btnAll         = document.getElementById('btn-all');
+    const btnRefresh     = document.getElementById('btn-refresh');
+    const connDevices    = document.getElementById('connected-devices');
+    const toast          = document.getElementById('toast');
+    const toastMsg       = document.getElementById('toast-msg');
+
+    // ── PeerJS setup ──────────────────────────────────────────────
+    const peer = new Peer();
+
+    peer.on('open', (id) => {
+      myPeerId = id;
+      peerStatusDot.className = 'status-dot connected';
+      peerStatusText.textContent = 'Waiting for phone';
+      updateQRCode();
+    });
+
+    peer.on('connection', (conn) => {
+      setupDataConnection(conn);
+    });
+
+    peer.on('error', (err) => {
+      console.error('PeerJS error:', err);
+      peerStatusDot.className = 'status-dot disconnected';
+      peerStatusText.textContent = 'Broker error';
+    });
+
+    function setupDataConnection(conn) {
+      const peerId = conn.peer;
+
+      conn.on('open', () => {
+        connectedPeers.set(peerId, conn);
+        peerStatusDot.className = 'status-dot connected';
+        peerStatusText.textContent = `${connectedPeers.size} phone(s)`;
+        updateDeviceList();
+        showToast('Phone connected');
+      });
+
+      conn.on('data', (data) => {
+        handleIncomingData(data, peerId);
+      });
+
+      conn.on('close', () => {
+        connectedPeers.delete(peerId);
+        peerStatusText.textContent = connectedPeers.size ? `${connectedPeers.size} phone(s)` : 'Waiting for phone';
+        updateDeviceList();
+      });
+
+      conn.on('error', (err) => {
+        console.error('Data connection error:', err);
+        connectedPeers.delete(peerId);
+        updateDeviceList();
+      });
+    }
+
+    // ── Handle incoming WebRTC data ───────────────────────────────
+    function handleIncomingData(data, peerId) {
+      if (typeof data === 'string') {
+        const msg = JSON.parse(data);
+
+        if (msg.type === 'file-start') {
+          incomingFile = {
+            filename: msg.filename,
+            mimeType: msg.mimeType,
+            totalSize: msg.totalSize,
+            received: 0,
+            buffers: []
+          };
+          showToast(`Receiving ${msg.filename}...`);
+        }
+
+        if (msg.type === 'file-end' && incomingFile) {
+          // Assemble blob and upload to localhost
+          const blob = new Blob(incomingFile.buffers, { type: incomingFile.mimeType });
+          uploadToLocalServer(blob, incomingFile.filename);
+          incomingFile = null;
+        }
+      } else if (data instanceof ArrayBuffer && incomingFile) {
+        incomingFile.buffers.push(data);
+        incomingFile.received += data.byteLength;
+      }
+    }
+
+    // ── Upload received blob to localhost ──────────────────────────
+    async function uploadToLocalServer(blob, filename) {
+      const formData = new FormData();
+      formData.append('video', blob, filename);
+
+      try {
+        const res = await fetch(`${LOCAL_BASE}/upload`, { method: 'POST', body: formData });
+        const json = await res.json();
+        if (json.success) {
+          showToast(`${json.filename} saved to disk`);
+          loadFiles();
+        } else {
+          showToast('Save failed');
+        }
+      } catch (err) {
+        console.error('Local upload error:', err);
+        showToast('Failed to save file');
+      }
+    }
+
+    // ── QR code ───────────────────────────────────────────────────
+    async function updateQRCode() {
+      if (!myPeerId) return;
+
+      // Build the mobile recorder URL
+      let recorderBase = GITHUB_PAGES_BASE || LOCAL_BASE;
+      const mobileUrl = `${recorderBase}/?peerId=${myPeerId}`;
+
+      qrUrl.textContent = mobileUrl;
+
+      try {
+        const res = await fetch(`/api/qrcode?url=${encodeURIComponent(mobileUrl)}`);
+        const json = await res.json();
+        if (json.success) qrImg.src = json.qrCode;
+      } catch (err) {
+        console.error('QR generation failed:', err);
+      }
+    }
+
+    function updateDeviceList() {
+      if (connectedPeers.size === 0) {
+        connDevices.textContent = 'None';
+      } else {
+        connDevices.innerHTML = '';
+        let i = 1;
+        for (const [id] of connectedPeers) {
+          const el = document.createElement('div');
+          el.style.cssText = 'display:flex;align-items:center;gap:6px;padding:4px 0;';
+          el.innerHTML = `<span class="status-dot connected"></span> Phone ${i++}`;
+          connDevices.appendChild(el);
+        }
+      }
+    }
+
+    // ── Modal controls ────────────────────────────────────────────
+    btnShowQr.addEventListener('click', () => { qrModal.style.display = 'flex'; });
+    btnCloseQr.addEventListener('click', () => { qrModal.style.display = 'none'; });
+    qrModal.addEventListener('click', e => { if (e.target === qrModal) qrModal.style.display = 'none'; });
+
+    // ── File loading ──────────────────────────────────────────────
+    async function loadFiles() {
+      try {
+        const res = await fetch('/files');
+        allFiles = await res.json();
+        renderCalendar();
+        renderFiles();
+      } catch (err) {
+        console.error('Load files error:', err);
+        filesContainer.innerHTML = '<div class="empty-state" style="color:var(--color-danger);">Could not load files.</div>';
+      }
+    }
+
+    // ── Render files list ─────────────────────────────────────────
+    function renderFiles() {
+      const filtered = selectedDate
+        ? allFiles.filter(f => new Date(f.createdAt).toISOString().split('T')[0] === selectedDate)
+        : allFiles;
+
+      if (selectedDate) {
+        const d = new Date(selectedDate + 'T00:00:00');
+        listTitle.textContent = d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+        listSubtitle.textContent = 'Recordings from this day';
+      } else {
+        listTitle.textContent = 'All recordings';
+        listSubtitle.textContent = 'Showing all stored files';
+      }
+
+      fileCount.textContent = `${filtered.length} file${filtered.length !== 1 ? 's' : ''}`;
+
+      if (!filtered.length) {
+        filesContainer.innerHTML = `<div class="empty-state">
+          <i class="ti ti-video" style="font-size: 24px; display: block; margin-bottom: var(--space-2);"></i>
+          ${selectedDate ? 'No recordings on this day.' : 'No recordings yet. Connect your phone to start.'}
+        </div>`;
+        return;
+      }
+
+      filesContainer.innerHTML = '';
+      filtered.forEach(f => {
+        const time = new Date(f.createdAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        const size = formatBytes(f.size);
+        const ext = f.filename.split('.').pop();
+        const safeId = f.filename.replace(/\./g, '_');
+
+        const wrapper = document.createElement('div');
+        wrapper.style.cssText = 'display:flex;flex-direction:column;gap:0;';
+
+        const card = document.createElement('div');
+        card.className = 'file-card';
+        card.innerHTML = `
+          <div class="file-icon"><i class="ti ti-video"></i></div>
+          <div class="file-info">
+            <div class="file-name">${f.filename}</div>
+            <div class="file-meta">${size} &middot; ${time} &middot; <span class="badge badge-${ext}">${ext}</span></div>
+          </div>
+          <div class="file-actions">
+            <button class="btn btn-ghost btn-small" onclick="togglePreview('${f.filename}')" title="Preview">
+              <i class="ti ti-player-play" id="play-icon-${safeId}"></i>
+            </button>
+            <a href="${f.streamUrl}" download="${f.filename}" class="btn btn-ghost btn-small" title="Download">
+              <i class="ti ti-download"></i>
+            </a>
+            <button class="btn btn-ghost btn-small" onclick="deleteFile('${f.filename}')" title="Delete" style="color:var(--color-danger);">
+              <i class="ti ti-trash"></i>
+            </button>
+          </div>`;
+
+        const preview = document.createElement('div');
+        preview.className = 'video-preview';
+        preview.id = `preview-${safeId}`;
+        preview.innerHTML = `<video id="video-${safeId}" controls preload="none"></video>`;
+
+        wrapper.appendChild(card);
+        wrapper.appendChild(preview);
+        filesContainer.appendChild(wrapper);
+      });
+    }
+
+    window.togglePreview = function(filename) {
+      const safeId = filename.replace(/\./g, '_');
+      const container = document.getElementById(`preview-${safeId}`);
+      const video = document.getElementById(`video-${safeId}`);
+      const icon = document.getElementById(`play-icon-${safeId}`);
+
+      if (container.style.display === 'block') {
+        container.style.display = 'none';
+        video.pause();
+        video.src = '';
+        icon.className = 'ti ti-player-play';
+      } else {
+        container.style.display = 'block';
+        video.src = `/stream/${filename}`;
+        video.load();
+        video.play();
+        icon.className = 'ti ti-player-stop';
+      }
+    };
+
+    window.deleteFile = async function(filename) {
+      if (!confirm(`Delete ${filename}?`)) return;
+      try {
+        const res = await fetch(`/files/${filename}`, { method: 'DELETE' });
+        const json = await res.json();
+        if (json.success) { loadFiles(); showToast(`Deleted ${filename}`); }
+      } catch (err) { console.error('Delete error:', err); }
+    };
+
+    // ── Calendar ──────────────────────────────────────────────────
+    const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+    function renderCalendar() {
+      const year = calendarDate.getFullYear();
+      const month = calendarDate.getMonth();
+      calendarTitle.textContent = `${MONTHS[month]} ${year}`;
+      calendarDays.innerHTML = '';
+
+      const firstDay = new Date(year, month, 1).getDay();
+      const totalDays = new Date(year, month + 1, 0).getDate();
+      const todayStr = new Date().toISOString().split('T')[0];
+
+      for (let i = 0; i < firstDay; i++) {
+        const el = document.createElement('div');
+        el.className = 'calendar-day empty';
+        calendarDays.appendChild(el);
+      }
+
+      for (let day = 1; day <= totalDays; day++) {
+        const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        const el = document.createElement('div');
+        el.className = 'calendar-day';
+        el.textContent = day;
+
+        if (dateStr === todayStr) el.classList.add('today');
+        if (dateStr === selectedDate) el.classList.add('selected');
+        if (allFiles.some(f => new Date(f.createdAt).toISOString().split('T')[0] === dateStr)) {
+          el.classList.add('has-recordings');
+        }
+
+        el.addEventListener('click', () => {
+          document.querySelectorAll('.calendar-day.selected').forEach(c => c.classList.remove('selected'));
+          selectedDate = selectedDate === dateStr ? null : dateStr;
+          if (selectedDate) el.classList.add('selected');
+          renderFiles();
+        });
+
+        calendarDays.appendChild(el);
+      }
+    }
+
+    prevMonth.addEventListener('click', () => { calendarDate.setMonth(calendarDate.getMonth() - 1); renderCalendar(); });
+    nextMonth.addEventListener('click', () => { calendarDate.setMonth(calendarDate.getMonth() + 1); renderCalendar(); });
+    btnAll.addEventListener('click', () => {
+      selectedDate = null;
+      document.querySelectorAll('.calendar-day.selected').forEach(c => c.classList.remove('selected'));
+      renderFiles();
+    });
+    btnRefresh.addEventListener('click', () => { loadFiles(); showToast('Refreshed'); });
+
+    // ── SSE ───────────────────────────────────────────────────────
+    function initSSE() {
+      const src = new EventSource('/events');
+      src.onmessage = (e) => {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'new_file') {
+          allFiles.unshift(msg.data);
+          renderCalendar();
+          renderFiles();
+        } else if (msg.type === 'delete_file') {
+          allFiles = allFiles.filter(f => f.filename !== msg.data.filename);
+          renderCalendar();
+          renderFiles();
+        }
+      };
+      src.onerror = () => { src.close(); setTimeout(initSSE, 5000); };
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────
+    function formatBytes(b) {
+      if (!b) return '0 B';
+      const u = ['B', 'KB', 'MB', 'GB'];
+      const i = Math.floor(Math.log(b) / Math.log(1024));
+      return `${(b / Math.pow(1024, i)).toFixed(1)} ${u[i]}`;
+    }
+
+    function showToast(msg) {
+      toastMsg.textContent = msg;
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 3500);
+    }
+
+    // ── Init ──────────────────────────────────────────────────────
+    loadFiles();
+    initSSE();
+  </script>
+</body>
+</html>

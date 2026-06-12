@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>rec.relay</title>
+  <meta name="description" content="Record on mobile, land on PC, over LAN.">
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css">
+</head>
+<body>
+
+  <div class="mobile-container">
+
+    <!-- Header -->
+    <div style="text-align: center; padding: var(--space-4) 0;">
+      <h1 style="color: var(--color-primary);">rec.relay</h1>
+      <p style="font-size: 11px; color: var(--ink-muted); margin-top: var(--space-1);">record on mobile, land on PC</p>
+    </div>
+
+    <!-- Connection status -->
+    <div id="connection-banner" class="card" style="margin-bottom: var(--space-4); text-align: center; padding: var(--space-3);">
+      <span class="status-dot waiting"></span>
+      <span id="connection-text" style="font-size: 13px; color: var(--ink-secondary);">Connecting to PC...</span>
+    </div>
+
+    <!-- Viewfinder -->
+    <div class="viewfinder-wrap">
+      <video id="viewfinder" autoplay playsinline muted class="mirrored"></video>
+
+      <div class="viewfinder-overlay">
+        <!-- Top row: status + timer -->
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <span id="rec-status" class="badge badge-idle">ready</span>
+          <span id="rec-timer" style="font-family: var(--font-mono); font-size: 13px; color: #fff; display: none;">00:00</span>
+        </div>
+
+        <!-- Upload progress overlay -->
+        <div id="upload-overlay" class="upload-overlay">
+          <p style="font-size: 13px; color: var(--ink-secondary); margin-bottom: var(--space-2);">Sending to PC...</p>
+          <p id="upload-pct" style="font-size: 18px; font-weight: 500; color: var(--color-primary);">0%</p>
+          <div class="progress-bar" style="margin-top: var(--space-2);">
+            <div id="upload-bar" class="progress-fill"></div>
+          </div>
+        </div>
+
+        <!-- Success overlay -->
+        <div id="success-overlay" class="upload-overlay" style="display: none;">
+          <p style="font-size: 18px; color: var(--color-primary); margin-bottom: var(--space-1);">&#10003;</p>
+          <p style="font-size: 13px; color: var(--ink-primary); margin-bottom: var(--space-4);">Landed on PC</p>
+          <button id="btn-new" class="btn btn-secondary" style="width: 100%;">Record another</button>
+        </div>
+
+        <div></div>
+      </div>
+    </div>
+
+    <!-- Controls -->
+    <div class="controls-row">
+      <button id="btn-flip" class="circle-btn" title="Flip camera">
+        <i class="ti ti-refresh"></i>
+      </button>
+
+      <div>
+        <button id="btn-record" class="record-btn" disabled>
+          <div class="record-btn-inner"></div>
+        </button>
+      </div>
+
+      <button id="btn-upload" class="circle-btn" style="background: var(--color-upload-bg); border-color: var(--color-primary); color: var(--color-primary); display: none;" title="Send to PC">
+        <i class="ti ti-upload"></i>
+      </button>
+    </div>
+
+  </div>
+
+  <!-- PeerJS -->
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+
+  <script>
+    // ── Elements ──────────────────────────────────────────────────
+    const viewfinder     = document.getElementById('viewfinder');
+    const recordBtn      = document.getElementById('btn-record');
+    const uploadBtn      = document.getElementById('btn-upload');
+    const flipBtn        = document.getElementById('btn-flip');
+    const recStatus      = document.getElementById('rec-status');
+    const recTimer       = document.getElementById('rec-timer');
+    const uploadOverlay  = document.getElementById('upload-overlay');
+    const uploadBar      = document.getElementById('upload-bar');
+    const uploadPct      = document.getElementById('upload-pct');
+    const successOverlay = document.getElementById('success-overlay');
+    const btnNew         = document.getElementById('btn-new');
+    const connBanner     = document.getElementById('connection-banner');
+    const connText       = document.getElementById('connection-text');
+    const connDot        = connBanner.querySelector('.status-dot');
+
+    // ── State ─────────────────────────────────────────────────────
+    let mediaStream   = null;
+    let mediaRecorder = null;
+    let chunks        = [];
+    let isRecording   = false;
+    let facingMode    = 'user';
+    let timerInterval = null;
+    let seconds       = 0;
+    let peerConn      = null; // WebRTC data connection to PC
+
+    // ── WebRTC: connect to PC peer ────────────────────────────────
+    const params = new URLSearchParams(window.location.search);
+    const pcPeerId = params.get('peerId');
+
+    if (!pcPeerId) {
+      connDot.className = 'status-dot disconnected';
+      connText.textContent = 'No peer ID found. Scan the QR code from the PC dashboard.';
+    } else {
+      const peer = new Peer();
+
+      peer.on('open', () => {
+        peerConn = peer.connect(pcPeerId, { reliable: true });
+
+        peerConn.on('open', () => {
+          connDot.className = 'status-dot connected';
+          connText.textContent = 'Connected to PC';
+          recordBtn.disabled = false;
+        });
+
+        peerConn.on('close', () => {
+          connDot.className = 'status-dot disconnected';
+          connText.textContent = 'Disconnected from PC';
+          recordBtn.disabled = true;
+        });
+
+        peerConn.on('error', (err) => {
+          console.error('PeerJS connection error:', err);
+          connDot.className = 'status-dot disconnected';
+          connText.textContent = 'Connection error';
+        });
+      });
+
+      peer.on('error', (err) => {
+        console.error('PeerJS error:', err);
+        connDot.className = 'status-dot disconnected';
+        connText.textContent = 'Failed to connect';
+      });
+    }
+
+    // ── Camera ────────────────────────────────────────────────────
+    async function initCamera() {
+      if (mediaStream) mediaStream.getTracks().forEach(t => t.stop());
+      try {
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode, width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: true
+        });
+        viewfinder.srcObject = mediaStream;
+        viewfinder.classList.toggle('mirrored', facingMode === 'user');
+      } catch (err) {
+        console.error('Camera error:', err);
+        recStatus.textContent = 'camera blocked';
+        recStatus.className = 'badge badge-error';
+      }
+    }
+
+    flipBtn.addEventListener('click', () => {
+      if (isRecording) return;
+      facingMode = facingMode === 'user' ? 'environment' : 'user';
+      initCamera();
+    });
+
+    // ── Recording ─────────────────────────────────────────────────
+    recordBtn.addEventListener('click', () => {
+      isRecording ? stopRecording() : startRecording();
+    });
+
+    function startRecording() {
+      if (!mediaStream) return;
+      chunks = [];
+
+      let opts = { mimeType: 'video/webm;codecs=vp9,opus' };
+      if (!MediaRecorder.isTypeSupported(opts.mimeType)) {
+        opts = { mimeType: 'video/webm;codecs=vp8,opus' };
+        if (!MediaRecorder.isTypeSupported(opts.mimeType)) {
+          opts = { mimeType: 'video/webm' };
+          if (!MediaRecorder.isTypeSupported(opts.mimeType)) {
+            opts = { mimeType: 'video/mp4' };
+          }
+        }
+      }
+
+      try { mediaRecorder = new MediaRecorder(mediaStream, opts); }
+      catch { mediaRecorder = new MediaRecorder(mediaStream); }
+
+      mediaRecorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+      mediaRecorder.onstop = () => {
+        recStatus.textContent = 'stopped';
+        recStatus.className = 'badge badge-idle';
+        uploadBtn.style.display = 'flex';
+      };
+
+      mediaRecorder.start(250);
+      isRecording = true;
+      document.querySelector('.mobile-container').classList.add('recording');
+      recStatus.textContent = 'rec';
+      recStatus.className = 'badge badge-error';
+
+      seconds = 0;
+      recTimer.textContent = '00:00';
+      recTimer.style.display = 'block';
+      timerInterval = setInterval(() => {
+        seconds++;
+        recTimer.textContent = `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+      }, 1000);
+
+      uploadBtn.style.display = 'none';
+      successOverlay.style.display = 'none';
+    }
+
+    function stopRecording() {
+      if (!mediaRecorder || mediaRecorder.state === 'inactive') return;
+      mediaRecorder.stop();
+      isRecording = false;
+      document.querySelector('.mobile-container').classList.remove('recording');
+      clearInterval(timerInterval);
+      recTimer.style.display = 'none';
+    }
+
+    // ── Upload via WebRTC ─────────────────────────────────────────
+    uploadBtn.addEventListener('click', async () => {
+      if (!chunks.length || !peerConn || !peerConn.open) return;
+
+      const mime = mediaRecorder?.mimeType || 'video/webm';
+      const ext = mime.includes('mp4') ? 'mp4' : 'webm';
+      const blob = new Blob(chunks, { type: mime });
+      const arrayBuffer = await blob.arrayBuffer();
+
+      uploadBtn.style.display = 'none';
+      uploadOverlay.style.display = 'block';
+      recordBtn.disabled = true;
+      flipBtn.disabled = true;
+
+      // Send metadata first
+      peerConn.send(JSON.stringify({
+        type: 'file-start',
+        filename: `recording-${Date.now()}.${ext}`,
+        mimeType: mime,
+        totalSize: arrayBuffer.byteLength
+      }));
+
+      // Send in 64KB chunks
+      const CHUNK = 64 * 1024;
+      let sent = 0;
+      for (let offset = 0; offset < arrayBuffer.byteLength; offset += CHUNK) {
+        const slice = arrayBuffer.slice(offset, Math.min(offset + CHUNK, arrayBuffer.byteLength));
+        peerConn.send(slice);
+        sent += slice.byteLength;
+        const pct = Math.round((sent / arrayBuffer.byteLength) * 100);
+        uploadBar.style.width = `${pct}%`;
+        uploadPct.textContent = `${pct}%`;
+
+        // Yield to browser to keep UI responsive
+        if (offset % (CHUNK * 4) === 0) await new Promise(r => setTimeout(r, 0));
+      }
+
+      peerConn.send(JSON.stringify({ type: 'file-end' }));
+
+      // Show success
+      uploadOverlay.style.display = 'none';
+      successOverlay.style.display = 'block';
+      recStatus.textContent = 'sent';
+      recStatus.className = 'badge badge-upload';
+      recordBtn.disabled = false;
+      flipBtn.disabled = false;
+      chunks = [];
+    });
+
+    // ── New recording ─────────────────────────────────────────────
+    btnNew.addEventListener('click', () => {
+      successOverlay.style.display = 'none';
+      recStatus.textContent = 'ready';
+      recStatus.className = 'badge badge-idle';
+      uploadBar.style.width = '0%';
+      uploadPct.textContent = '0%';
+    });
+
+    // ── Init ──────────────────────────────────────────────────────
+    initCamera();
+  </script>
+</body>
+</html>

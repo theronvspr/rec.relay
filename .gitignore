@@ -1,0 +1,8 @@
+references/
+
+# Common node.js/project ignores
+node_modules/
+uploads/
+.env
+.DS_Store
+.gemini/
