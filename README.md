@@ -64,7 +64,9 @@ This starts the Express server, prints a QR code in your terminal, and opens the
 ## Screenshots
 
 **Mobile recording interface**
+
 ![rec.relay mobile UI showing the recording screen, active recording state, and post-send confirmation dialog](./docs/mobile.png)
 
 **Web Dashboard and Terminal UI**
+
 ![rec.relay web dashboard with recording list and calendar, alongside the TUI with file list and recording details](./docs/dashboards.png)
