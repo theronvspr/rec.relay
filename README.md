@@ -80,4 +80,4 @@ This starts the Express server, prints a QR code in your terminal, and opens the
 
 **Terminal UI**
 
-![rec.relay TUI showing recordings list, calendar, file details panel, and keyboard shortcuts](./docs/tui.png)
+![rec.relay TUI showing recordings list, calendar, file details panel, and keyboard shortcuts](./docs/tui.jpg)
