@@ -16,8 +16,7 @@ So I built this. Scan a QR code, record in the browser, tap send, done.
 ## Features
 
 - **100% Local:** Videos stream directly from your phone to your PC. Nothing touches an external server.
-- **No App Install:** Scan the QR code, record in your mobile browser, sync immediately.
-- **Orientation-Aware:** Detects portrait and landscape mode automatically and adjusts recording output.
+- **No Mobile App Install:** Scan the QR code, record in your mobile browser, sync immediately.
 - **Terminal UI (TUI):** Command-line interface with a calendar view, file list, QR code overlays, and quick actions.
 - **Web Dashboard:** Browser-based playback with recording management, tags, notes, and audio references.
 - **Auto-Updater:** Checks for new releases on startup and supports self-updating from the terminal.
