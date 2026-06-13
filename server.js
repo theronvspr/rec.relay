@@ -11,7 +11,7 @@ import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const APP_VERSION = '3.4.2';
+const APP_VERSION = '3.5.0';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -139,25 +139,30 @@ app.get('/api/server-info', (_req, res) => {
   res.json({ success: true, localIPs: ips, port: server.address()?.port || PORT });
 });
 
-// ── API: Check for updates via GitHub ──────────────────────────────
-app.get('/api/check-update', async (_req, res) => {
+// ── Helper: Get latest version from GitHub ─────────────────────────
+async function getLatestVersion() {
   try {
     const response = await fetch('https://api.github.com/repos/theronvspr/rec.relay/releases/latest', {
       headers: { 'User-Agent': 'rec.relay-app' }
     });
     if (response.status === 404) {
-      return res.json({ success: true, latestVersion: null, currentVersion: APP_VERSION });
+      return null;
     }
     if (!response.ok) {
       throw new Error(`GitHub API returned status ${response.status}`);
     }
     const data = await response.json();
-    const latestVersion = data.tag_name ? data.tag_name.replace(/^v/, '') : '';
-    res.json({ success: true, latestVersion, currentVersion: APP_VERSION });
+    return data.tag_name ? data.tag_name.replace(/^v/, '') : '';
   } catch (err) {
     console.error('Update check failed:', err);
-    res.status(500).json({ success: false, message: err.message });
+    return null;
   }
+}
+
+// ── API: Check for updates via GitHub ──────────────────────────────
+app.get('/api/check-update', async (_req, res) => {
+  const latestVersion = await getLatestVersion();
+  res.json({ success: true, latestVersion, currentVersion: APP_VERSION });
 });
 
 // ── Pages ───────────────────────────────────────────────────────────
@@ -351,6 +356,22 @@ function initCliMode(boundPort) {
   let showQrOverlay = false;
   let tuiSearchQuery = '';
   let isPromptActive = false;
+  let latestVersion = null;
+  let isGitRepo = false;
+
+  try {
+    isGitRepo = fs.existsSync(path.join(__dirname, '.git'));
+  } catch (_) {}
+
+  // Run update check asynchronously on startup
+  getLatestVersion().then(ver => {
+    if (ver && ver !== APP_VERSION) {
+      latestVersion = ver;
+      if (!isPromptActive) {
+        drawScreen();
+      }
+    }
+  });
 
   function getFriendlySize(bytes) {
     if (!bytes) return '0 B';
@@ -704,7 +725,21 @@ function initCliMode(boundPort) {
     screenRows.push('  ────────────────────────────────────────────────────────────────────────────────');
     screenRows.push('  \x1b[1m[Tab]\x1b[0m Switch Pane   \x1b[1m[Arrows]\x1b[0m Navigate   \x1b[1m[Enter]\x1b[0m Filter Date / Open File');
     screenRows.push('  \x1b[1m[f]\x1b[0m Filter Search   \x1b[1m[c]\x1b[0m QR Code      \x1b[1m[e]\x1b[0m Edit Details   \x1b[1m[d]\x1b[0m Web Dashboard');
-    screenRows.push('  \x1b[1m[Del/Backspace]\x1b[0m Delete      \x1b[1m[q]\x1b[0m Quit');
+    
+    let footerQuitLine = '  \x1b[1m[Del/Backspace]\x1b[0m Delete      \x1b[1m[q]\x1b[0m Quit';
+    if (latestVersion && isGitRepo) {
+      footerQuitLine += '      \x1b[1m[u]\x1b[0m Git Update';
+    }
+    screenRows.push(footerQuitLine);
+
+    if (latestVersion) {
+      screenRows.push('');
+      if (isGitRepo) {
+        screenRows.push(`  \x1b[33m\x1b[1m⚠️ Update available (v${latestVersion})!\x1b[0m Press \x1b[32m[u]\x1b[0m to git pull and update.`);
+      } else {
+        screenRows.push(`  \x1b[33m\x1b[1m⚠️ Update available (v${latestVersion})!\x1b[0m Run: \x1b[36mnpx --yes --prefer-online github:theronvspr/rec.relay\x1b[0m`);
+      }
+    }
     
     process.stdout.write('\x1b[2J\x1b[H');
     process.stdout.write(screenRows.join('\n') + '\n');
@@ -839,12 +874,84 @@ function initCliMode(boundPort) {
     });
   }
 
+  function promptGitUpdate() {
+    if (!latestVersion || !isGitRepo) return;
+    isPromptActive = true;
+    if (process.stdin.isTTY) {
+      process.stdin.setRawMode(false);
+    }
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout
+    });
+    
+    process.stdout.write('\x1b[2J\x1b[H');
+    rl.question(`\n  Are you sure you want to run git pull & npm install to update to v${latestVersion}? (y/N): `, (answer) => {
+      rl.close();
+      if (answer.trim().toLowerCase() !== 'y') {
+        process.stdin.resume();
+        if (process.stdin.isTTY) {
+          process.stdin.setRawMode(true);
+        }
+        isPromptActive = false;
+        drawScreen();
+        return;
+      }
+      
+      console.log('\n  Updating rec.relay...\n');
+      console.log('  Running: git pull...');
+      exec('git pull', (err, stdout, stderr) => {
+        if (err) {
+          console.error(`\n  Error running git pull: ${err.message}`);
+          console.log('\n  Press any key to return to dashboard...');
+          process.stdin.resume();
+          if (process.stdin.isTTY) {
+            process.stdin.setRawMode(true);
+          }
+          isPromptActive = false;
+          const onKey = () => {
+            process.stdin.removeListener('keypress', onKey);
+            drawScreen();
+          };
+          process.stdin.once('keypress', onKey);
+          return;
+        }
+        console.log(stdout || stderr);
+        
+        console.log('  Running: npm install...');
+        exec('npm install', (npmErr, npmStdout, npmStderr) => {
+          if (npmErr) {
+            console.error(`\n  Error running npm install: ${npmErr.message}`);
+          } else {
+            console.log(npmStdout || npmStderr);
+            console.log(`\n  \x1b[32mSuccessfully updated to v${latestVersion}!\x1b[0m`);
+            console.log('  Please restart the CLI to apply the updates.');
+          }
+          console.log('\n  Press any key to exit...');
+          process.stdin.resume();
+          if (process.stdin.isTTY) {
+            process.stdin.setRawMode(true);
+          }
+          const onKey = () => {
+            process.exit(0);
+          };
+          process.stdin.once('keypress', onKey);
+        });
+      });
+    });
+  }
+
   process.stdin.on('keypress', (str, key) => {
     if (isPromptActive) return;
     if (!key) return;
     
     if (key.ctrl && key.name === 'c') {
       process.exit();
+    }
+    
+    if (key.name === 'u' && latestVersion && isGitRepo) {
+      promptGitUpdate();
+      return;
     }
     
     if (showQrOverlay) {

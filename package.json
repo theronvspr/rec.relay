@@ -1,6 +1,6 @@
 {
   "name": "rec.relay",
-  "version": "3.4.2",
+  "version": "3.5.0",
   "description": "Record on mobile, land on PC, over LAN. WebRTC peer-to-peer video relay.",
   "type": "module",
   "bin": {
