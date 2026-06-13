@@ -159,6 +159,19 @@ async function getLatestVersion() {
   }
 }
 
+function isVersionNewer(latestStr, currentStr) {
+  if (!latestStr) return false;
+  const latest = latestStr.split('.').map(Number);
+  const current = currentStr.split('.').map(Number);
+  for (let i = 0; i < Math.max(latest.length, current.length); i++) {
+    const v1 = latest[i] || 0;
+    const v2 = current[i] || 0;
+    if (v1 > v2) return true;
+    if (v1 < v2) return false;
+  }
+  return false;
+}
+
 // ── API: Check for updates via GitHub ──────────────────────────────
 app.get('/api/check-update', async (_req, res) => {
   const latestVersion = await getLatestVersion();
@@ -365,7 +378,7 @@ function initCliMode(boundPort) {
 
   // Run update check asynchronously on startup
   getLatestVersion().then(ver => {
-    if (ver && ver !== APP_VERSION) {
+    if (ver && isVersionNewer(ver, APP_VERSION)) {
       latestVersion = ver;
       if (!isPromptActive) {
         drawScreen();
