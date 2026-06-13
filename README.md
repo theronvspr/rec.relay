@@ -60,13 +60,24 @@ This starts the Express server, prints a QR code in your terminal, and opens the
 | `[u]` | Run git update (only when inside a git clone) |
 | `[Del / Backspace]` | Delete selected recording |
 | `[q]` | Shut down server and exit |
-
 ## Screenshots
 
-**Mobile recording interface**
+**Mobile — ready to record**
 
-![rec.relay mobile UI showing the recording screen, active recording state, and post-send confirmation dialog](./docs/mobile.png)
+![rec.relay mobile interface in ready state](./docs/mobile-ready.png)
 
-**Web Dashboard and Terminal UI**
+**Mobile — recording in progress**
 
-![rec.relay web dashboard with recording list and calendar, alongside the TUI with file list and recording details](./docs/dashboards.png)
+![rec.relay mobile interface actively recording with timer](./docs/mobile-recording.png)
+
+**Mobile — sent confirmation**
+
+![rec.relay mobile interface showing Landed on PC confirmation dialog](./docs/mobile-sent.png)
+
+**Web Dashboard**
+
+![rec.relay web dashboard showing recording list with calendar and tag filters](./docs/dashboard.png)
+
+**Terminal UI**
+
+![rec.relay TUI showing recordings list, calendar, file details panel, and keyboard shortcuts](./docs/tui.png)
