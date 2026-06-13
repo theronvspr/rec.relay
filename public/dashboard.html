@@ -260,6 +260,7 @@
           console.log(`Finished receiving file: ${incomingFile.filename}. Total received size: ${incomingFile.received} bytes. Assembling blob...`);
           // Assemble blob and upload to localhost
           const blob = new Blob(incomingFile.buffers, { type: incomingFile.mimeType });
+          console.log(`Blob assembled: ${blob.size} bytes, type: ${blob.type}, chunks: ${incomingFile.buffers.length}`);
           uploadToLocalServer(blob, incomingFile.filename, {
             comment: incomingFile.comment,
             tags: incomingFile.tags,
@@ -268,32 +269,74 @@
           incomingFile = null;
         }
       } else if (incomingFile) {
-        incomingFile.buffers.push(data);
-        const chunkSize = data.byteLength || data.size || 0;
+        // Normalize to Uint8Array — PeerJS may deliver ArrayBuffer, TypedArray, or other binary types
+        let chunk;
+        if (data instanceof ArrayBuffer) {
+          chunk = new Uint8Array(data);
+        } else if (ArrayBuffer.isView(data)) {
+          chunk = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+        } else {
+          chunk = data; // Blob or unknown — pass through
+        }
+        incomingFile.buffers.push(chunk);
+        const chunkSize = chunk.byteLength || chunk.size || 0;
         incomingFile.received += chunkSize;
       }
     }
 
     // ── Upload received blob to localhost ──────────────────────────
     async function uploadToLocalServer(blob, filename, metadata = {}) {
+      // Ensure mime type is clean (strip codec params for the upload)
+      const baseMime = (blob.type || 'video/webm').split(';')[0].trim();
+
+      // Convert the blob to a proper File object — some browsers handle
+      // File objects in FormData more reliably than raw Blobs
+      const file = new File([blob], filename, { type: baseMime });
+
       const formData = new FormData();
-      formData.append('video', blob, filename);
+      formData.append('video', file, filename);
       formData.append('comment', metadata.comment || '');
       formData.append('tags', JSON.stringify(metadata.tags || []));
       formData.append('musicLink', metadata.musicLink || '');
 
       try {
-        const res = await fetch(`${LOCAL_BASE}/upload`, { method: 'POST', body: formData });
+        const res = await fetch('/upload', { method: 'POST', body: formData });
         const json = await res.json();
         if (json.success) {
           showToast(`${json.filename} saved to disk`);
           loadFiles();
         } else {
+          console.error('Upload response not successful:', json);
           showToast('Save failed');
         }
       } catch (err) {
-        console.error('Local upload error:', err);
-        showToast('Failed to save file');
+        console.error('Fetch upload failed, trying XMLHttpRequest fallback:', err);
+        // Fallback to XMLHttpRequest which can be more reliable for large uploads
+        try {
+          await new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', '/upload');
+            xhr.onload = () => {
+              try {
+                const json = JSON.parse(xhr.responseText);
+                if (json.success) {
+                  showToast(`${json.filename} saved to disk`);
+                  loadFiles();
+                } else {
+                  showToast('Save failed');
+                }
+                resolve();
+              } catch (e) {
+                reject(e);
+              }
+            };
+            xhr.onerror = () => reject(new Error('XHR upload failed'));
+            xhr.send(formData);
+          });
+        } catch (xhrErr) {
+          console.error('XHR upload also failed:', xhrErr);
+          showToast('Failed to save file — check server is running');
+        }
       }
     }
 
@@ -621,10 +664,24 @@
         container.style.display = 'none';
         video.pause();
         video.src = '';
+        container.classList.remove('portrait', 'landscape');
         icon.className = 'ti ti-player-play';
       } else {
         container.style.display = 'block';
         video.src = `/stream/${filename}`;
+
+        // Detect orientation once video metadata loads
+        video.onloadedmetadata = () => {
+          const w = video.videoWidth;
+          const h = video.videoHeight;
+          container.classList.remove('portrait', 'landscape');
+          if (h > w) {
+            container.classList.add('portrait');
+          } else {
+            container.classList.add('landscape');
+          }
+        };
+
         video.load();
         video.play();
         icon.className = 'ti ti-player-stop';

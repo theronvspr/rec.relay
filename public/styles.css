@@ -281,12 +281,28 @@ h3 { font-size: 15px; }
   overflow: hidden;
   border: 0.5px solid var(--color-border);
   background: #000;
+  transition: max-width var(--duration-base) var(--ease-out-quart);
 }
 .video-preview video {
   width: 100%;
-  max-height: 450px;
+  max-height: 500px;
   object-fit: contain;
   display: block;
+}
+
+/* Portrait video: constrain width, center */
+.video-preview.portrait {
+  max-width: 280px;
+  margin-left: auto;
+  margin-right: auto;
+}
+.video-preview.portrait video {
+  max-height: 500px;
+}
+
+/* Landscape video: full width */
+.video-preview.landscape {
+  max-width: 100%;
 }
 
 /* ── Calendar ────────────────────────────────────────────────────── */

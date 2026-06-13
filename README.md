@@ -7,8 +7,6 @@
 
 ## Running It
 
-### Option 1: Terminal CLI
-
 Requires Node.js v18+.
 
 ```bash
@@ -16,19 +14,6 @@ npx github:theronvspr/rec.relay
 ```
 
 Starts the Express server, prints a QR code in your terminal, and opens the dashboard at `http://localhost:3000/dashboard`. Videos are saved to `./uploads` in whichever directory you ran the command from.
-
----
-
-### Option 2: Desktop App
-
-1. Go to the [GitHub Releases](https://github.com/theronvspr/rec.relay/releases) page.
-2. Download one of:
-   - **Portable**: `rec.relay-Portable-3.2.0.exe` — run directly, no setup.
-   - **Installer**: `rec.relay-Setup-3.2.0.exe` — installs the app and adds desktop shortcuts.
-3. Open the app. The dashboard and QR code appear in a window.
-
-Videos are saved to:
-- **Windows**: `C:\Users\<Name>\AppData\Roaming\rec.relay\uploads`
 
 ---
 
@@ -53,15 +38,4 @@ npm install
 ### Development mode
 ```bash
 npm run dev
-```
-
-### Run Electron locally
-```bash
-npm run electron:start
-```
-
-### Build Windows executables
-Outputs to `dist/`:
-```bash
-npm run electron:build
 ```

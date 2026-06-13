@@ -17,12 +17,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const HOST = '127.0.0.1'; // Bind to loopback only — no firewall rules needed
 
-let uploadDir = path.join(__dirname, 'uploads');
-if (process.env.RUNNING_IN_ELECTRON && process.env.ELECTRON_USER_DATA) {
-  uploadDir = path.join(process.env.ELECTRON_USER_DATA, 'uploads');
-} else {
-  uploadDir = path.resolve(process.cwd(), 'uploads');
-}
+let uploadDir = path.resolve(process.cwd(), 'uploads');
 
 // Ensure upload directory exists
 if (!fs.existsSync(uploadDir)) {
@@ -170,7 +165,10 @@ app.get('/', (_req, res) => res.sendFile(path.join(publicDir, 'index.html')));
 app.get('/dashboard', (_req, res) => res.sendFile(path.join(publicDir, 'dashboard.html')));
 
 // ── Upload ──────────────────────────────────────────────────────────
-app.post('/upload', upload.single('video'), (req, res) => {
+app.post('/upload', (req, res, next) => {
+  console.log(`[Upload] Incoming upload request from ${req.ip}`);
+  next();
+}, upload.single('video'), (req, res) => {
   if (!req.file) return res.status(400).json({ success: false, message: 'No video file received.' });
 
   const { filename, size } = req.file;
@@ -1120,7 +1118,7 @@ server.on('listening', () => {
     }
   }
 
-  if (process.env.RUNNING_AS_CLI === 'true' && process.env.RUNNING_IN_ELECTRON !== 'true') {
+  if (process.env.RUNNING_AS_CLI === 'true') {
     setupExitHandlers();
     startHeadlessBrowser(boundPort);
     initCliMode(boundPort);
@@ -1143,9 +1141,7 @@ server.on('listening', () => {
     console.log('');
   }
 
-  if (!process.env.RUNNING_IN_ELECTRON) {
-    openBrowser(`http://127.0.0.1:${boundPort}/dashboard`);
-  }
+  openBrowser(`http://127.0.0.1:${boundPort}/dashboard`);
 });
 
 server.on('error', (err) => {

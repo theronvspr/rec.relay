@@ -122,21 +122,34 @@
           incomingFile = null;
         }
       } else if (incomingFile) {
-        incomingFile.buffers.push(data);
-        const chunkSize = data.byteLength || data.size || 0;
+        // Normalize to Uint8Array — PeerJS may deliver ArrayBuffer, TypedArray, or other binary types
+        let chunk;
+        if (data instanceof ArrayBuffer) {
+          chunk = new Uint8Array(data);
+        } else if (ArrayBuffer.isView(data)) {
+          chunk = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+        } else {
+          chunk = data; // Blob or unknown — pass through
+        }
+        incomingFile.buffers.push(chunk);
+        const chunkSize = chunk.byteLength || chunk.size || 0;
         incomingFile.received += chunkSize;
       }
     }
 
     async function uploadToLocalServer(blob, filename, metadata = {}) {
+      // Ensure mime type is clean (strip codec params)
+      const baseMime = (blob.type || 'video/webm').split(';')[0].trim();
+      const file = new File([blob], filename, { type: baseMime });
+
       const formData = new FormData();
-      formData.append('video', blob, filename);
+      formData.append('video', file, filename);
       formData.append('comment', metadata.comment || '');
       formData.append('tags', JSON.stringify(metadata.tags || []));
       formData.append('musicLink', metadata.musicLink || '');
 
       try {
-        const res = await fetch(`${LOCAL_BASE}/upload`, { method: 'POST', body: formData });
+        const res = await fetch('/upload', { method: 'POST', body: formData });
         const json = await res.json();
         if (json.success) {
           console.log(`Saved ${json.filename} to local disk successfully.`);
@@ -144,7 +157,30 @@
           console.error('Save failed on local server.');
         }
       } catch (err) {
-        console.error('Local upload error:', err);
+        console.error('Fetch upload failed, trying XMLHttpRequest fallback:', err);
+        try {
+          await new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', '/upload');
+            xhr.onload = () => {
+              try {
+                const json = JSON.parse(xhr.responseText);
+                if (json.success) {
+                  console.log(`Saved ${json.filename} to local disk successfully (via XHR).`);
+                } else {
+                  console.error('Save failed on local server (via XHR).');
+                }
+                resolve();
+              } catch (e) {
+                reject(e);
+              }
+            };
+            xhr.onerror = () => reject(new Error('XHR upload failed'));
+            xhr.send(formData);
+          });
+        } catch (xhrErr) {
+          console.error('XHR upload also failed:', xhrErr);
+        }
       }
     }
 
